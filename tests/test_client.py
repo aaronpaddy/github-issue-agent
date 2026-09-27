@@ -94,11 +94,29 @@ def test_get_issue_reports_state_and_whether_it_is_a_pull_request():
             body=None,
             state="closed",
             pull_request=None,
-            get_comments=lambda: [SimpleNamespace(body="hi")],
+            get_comments=lambda: [
+                SimpleNamespace(user=SimpleNamespace(login="ann"), body="hi"),
+                SimpleNamespace(
+                    user=SimpleNamespace(login="bot[bot]"),
+                    body="Which one?\n\n<!-- issue-agent:clarification -->",
+                ),
+            ],
         )
 
     issue = make_client(SimpleNamespace(get_issue=get_issue)).get_issue(4)
     assert issue.state == "closed"
     assert not issue.is_pull_request
     assert issue.body == ""
-    assert issue.comments == ["hi"]
+    assert [(c.author, c.body, c.agent_kind) for c in issue.comments] == [
+        ("ann", "hi", None),
+        ("bot[bot]", "Which one?", "clarification"),
+    ]
+
+
+def test_comments_are_posted_with_the_agents_marker():
+    posted = []
+    repo = SimpleNamespace(
+        get_issue=lambda n: SimpleNamespace(create_comment=lambda body: posted.append(body))
+    )
+    make_client(repo).comment_on_issue(5, "What do you mean?", kind="clarification")
+    assert posted == ["What do you mean?\n\n<!-- issue-agent:clarification -->"]

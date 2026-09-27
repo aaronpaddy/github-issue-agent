@@ -1,4 +1,4 @@
-from src.agent.state import AgentStatus, Attempt, Job, ValidationOutcome
+from src.agent.state import AgentStatus, Attempt, IssueComment, Job, ValidationOutcome
 
 
 def make_job(**overrides):
@@ -36,11 +36,22 @@ def test_finish_sets_status_and_timestamp():
     assert job.finished_at is not None
 
 
-def test_issue_context_includes_comments():
-    job = make_job(issue_comments=["please fix soon"])
+def test_issue_context_shows_who_said_what():
+    job = make_job(
+        issue_comments=[
+            IssueComment("issue-pr-agent[bot]", "Which currencies?", agent_kind="clarification"),
+            IssueComment("aaronpaddy", "Just USD and EUR, formatting only."),
+        ]
+    )
     ctx = job.issue_context()
-    assert "please fix soon" in ctx
     assert "Bug" in ctx
+    assert "@issue-pr-agent[bot] (you, the agent, earlier): Which currencies?" in ctx
+    assert "@aaronpaddy: Just USD and EUR, formatting only." in ctx
+    assert ctx.index("Which currencies?") < ctx.index("Just USD and EUR")
+
+
+def test_issue_context_without_comments_has_no_comments_section():
+    assert "Comments" not in make_job().issue_context()
 
 
 def test_validation_outcome_checks_dict():

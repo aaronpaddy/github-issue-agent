@@ -15,6 +15,8 @@ from github.GithubException import GithubException, UnknownObjectException
 from github.Repository import Repository
 
 from github import Github
+from src.agent.state import IssueComment
+from src.github.threads import parse_comment, tag
 
 AGENT_BRANCH_PREFIX = "issue-agent/issue-"
 
@@ -24,7 +26,7 @@ class IssueContext:
     number: int
     title: str
     body: str
-    comments: list[str]
+    comments: list[IssueComment]
     state: str = "open"
     is_pull_request: bool = False
 
@@ -51,7 +53,7 @@ class GitHubClient:
 
     def get_issue(self, number: int) -> IssueContext:
         issue = self.repo.get_issue(number)
-        comments = [c.body for c in issue.get_comments()]
+        comments = [parse_comment(c.user.login, c.body or "") for c in issue.get_comments()]
         return IssueContext(
             number=issue.number,
             title=issue.title,
@@ -61,9 +63,16 @@ class GitHubClient:
             is_pull_request=issue.pull_request is not None,
         )
 
-    def comment_on_issue(self, number: int, body: str) -> None:
-        issue = self.repo.get_issue(number)
-        issue.create_comment(body)
+    def comment_on_issue(self, number: int, body: str, kind: str = "note") -> None:
+        """Post a comment marked as the agent's, so later runs can recognise it."""
+        self.repo.get_issue(number).create_comment(tag(body, kind))
+
+    def acknowledge(self, number: int) -> None:
+        """React to the issue so people can see it has been picked up. Best effort."""
+        try:
+            self.repo.get_issue(number).create_reaction("eyes")
+        except GithubException:
+            pass
 
     def open_pull_request(
         self,

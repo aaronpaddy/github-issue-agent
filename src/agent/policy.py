@@ -16,6 +16,7 @@ This is a pure function so every rule is covered by fast unit tests.
 from __future__ import annotations
 
 import enum
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
@@ -67,12 +68,19 @@ def _is_source_code(path: str) -> bool:
     return path.endswith((".py", ".ts", ".js", ".go", ".java", ".rb")) and not is_test_path(path)
 
 
+# A retry after one of these failing says the first solution was wrong. A retry after only
+# lint, formatting or type checks says it needed tidying, which is no reason to doubt the logic.
+BEHAVIORAL_CHECKS = frozenset({"pytest"})
+
+
 def decide(
     assessment: Assessment | None,
-    attempts: int,
+    earlier_failures: Sequence[Sequence[str]],
     stats: DiffStats,
     limits: Limits | None = None,
 ) -> Decision:
+    """`earlier_failures` lists, for each attempt that failed validation before the one that
+    passed, the names of the checks it failed."""
     limits = limits or Limits()
     if assessment is None:
         return Decision(
@@ -93,8 +101,8 @@ def decide(
             "The agent reported medium confidence: it interpreted a loosely worded issue "
             "or made a judgment call."
         )
-    if attempts > 1:
-        doubts.append(f"The fix needed {attempts} attempts to pass validation.")
+    if any(BEHAVIORAL_CHECKS & set(failed) for failed in earlier_failures):
+        doubts.append("An earlier attempt failed the tests before this one passed.")
 
     changed_source = [f for f in stats.files if _is_source_code(f)]
     changed_tests = [f for f in stats.files if is_test_path(f)]

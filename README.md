@@ -77,6 +77,11 @@ Fill in `.env`:
 | `MAX_ATTEMPTS` | Max implement/validate cycles per issue (default `2`) |
 | `MAX_BUDGET_USD` | Hard spend cap per run in USD (default `1.00`) |
 | `WORKSPACES_DIR` | Where per-run clones and virtualenvs are created (default `workspaces`) |
+| `KEEP_WORKSPACES` | Keep each run's clone and virtualenv instead of deleting them (default `false`) |
+| `WEBHOOK_SECRET` | Service only. Shared secret GitHub signs webhooks with |
+| `TRIGGER_LABEL` | Service only. Label that queues a run (default `agent`) |
+| `ALLOWED_REPOS` | Service only. Comma-separated `owner/name` list the service will act on (default: just `GITHUB_REPO`) |
+| `REDIS_URL` | Service only. Queue connection (default `redis://localhost:6379/0`) |
 
 ### Running as a GitHub App
 
@@ -116,11 +121,12 @@ Passing checks proves a change is *safe*, not that it is *right*. So the agent m
 
    | Situation | Outcome |
    |---|---|
-   | High confidence, one attempt, tests included, modest diff | Normal PR that closes the issue (`Fixes #N`) |
-   | Medium confidence, a retry was needed, source changed without tests, or a large diff | **Draft** PR that only references the issue (`Refs #N`), with the reasons listed |
+   | High confidence, no earlier test failures, tests included, modest diff | Normal PR that closes the issue (`Fixes #N`) |
+   | Medium confidence, an earlier attempt failed the tests, source changed without tests, or a large diff | **Draft** PR that only references the issue (`Refs #N`), with the reasons listed |
    | Low confidence or no self-assessment | No PR; the reasoning is posted on the issue |
 
-4. **Awareness of other work.** It skips issues that are closed, are pull requests, or already have an open agent PR, uses a unique branch name if an old one exists, and warns in the PR when another open PR touches the same files.
+4. **It holds a conversation.** Every comment the agent posts carries a hidden marker recording its kind (clarification, no-change, declined, escalated, error), and comments reach the model labelled with who wrote them, so it can tell its own earlier question from your answer. When it asks a clarifying question and a person replies, the service resumes automatically. A rule checked *before any model call* keeps it from repeating itself: a label on an issue where the agent already had the last word is skipped ("reply on the issue to continue"), and a reply is ignored unless the agent was actually waiting for one.
+5. **Awareness of other work.** It skips issues that are closed, are pull requests, or already have an open agent PR, uses a unique branch name if an old one exists, and warns in the PR when another open PR touches the same files.
 
 Every PR carries a "Reviewer notes" section with the confidence, the interpretation, the assumptions, and any reasons it is a draft.
 
@@ -139,6 +145,32 @@ Real repositories rarely start clean, so requiring every check to pass would mak
 `black` reports at file granularity, so new mis-formatted code inside a file that was already unformatted at baseline isn't flagged.
 
 The checks are defined in `src/agent/validator.py` (`DEFAULT_CHECKS`) for a Python project using pytest, ruff, black, and mypy. Adjust them for other repositories.
+
+## Running as a service
+
+Instead of running the CLI by hand, the agent can work from GitHub events. Applying a label (default `agent`) to an issue queues a run.
+
+```
+GitHub ──webhook──> FastAPI receiver ──> Redis queue ──> worker ──> pipeline ──> PR / comment
+                    verify, filter,       per-issue       (same code path
+                    dedupe, answer fast   lock            as the CLI)
+```
+
+The receiver does the minimum synchronously (GitHub only waits a few seconds) and hands everything slow to the worker:
+
+- **Signed requests only.** Every webhook is checked against `WEBHOOK_SECRET` (HMAC-SHA256, constant-time compare), and the service refuses to start without a secret.
+- **Narrow trigger.** Only a *person* applying the trigger label to an *open issue*, or replying on an issue that already has it, in an *allowed repository* queues work. Other events, other labels, pull requests, and bot senders (including the agent itself) are ignored. A GitHub App can't be assigned an issue, which is why a label is the trigger.
+- **No double runs.** A per-issue Redis lock means a redelivered webhook or a toggled label doesn't start a second run. The worker releases it when the run ends.
+- **No silent failures.** If a run crashes, the issue gets a short comment saying so instead of silence.
+- **Cleans up after itself.** A real run deletes its clone and virtualenv when it ends (dry runs and `KEEP_WORKSPACES=true` keep them).
+
+```bash
+redis-server                        # or any Redis; set REDIS_URL if it isn't on localhost:6379
+python -m src.service               # webhook receiver on 127.0.0.1:8000
+python -m src.service.worker        # worker; run several for parallel issues
+```
+
+Set the GitHub App's webhook URL to `<public url>/webhooks/github`, its webhook secret to `WEBHOOK_SECRET`, and subscribe it to **Issues** and **Issue comment** events. To reach a local machine, a relay such as [smee.io](https://smee.io) works: `npx smee-client --url https://smee.io/<channel> --target http://127.0.0.1:8000/webhooks/github`.
 
 ## Development
 
@@ -171,16 +203,22 @@ src/
     client.py       # Issues, PRs, drafts, overlap and duplicate detection (PyGithub)
     messages.py     # PR descriptions and issue comments
     git_ops.py      # Clean clone, commit, and push (token via env, never in URLs)
-  config.py         # Environment-driven settings
+  service/
+    webhook.py      # Signature check and trigger rules (pure functions)
+    app.py          # FastAPI receiver
+    queue.py        # Redis/RQ queue and the per-issue lock
+    jobs.py         # What the worker runs
+    worker.py       # Worker entry point
+  pipeline.py       # One end-to-end run on one issue (shared by the CLI and the worker)
   cli.py            # Command-line entry point
+  config.py         # Environment-driven settings
 tests/
 ```
 
 ## Status and limitations
 
-Early-stage. The agent runs from the command line, one issue at a time.
+Early-stage. It can run from the command line or as a webhook-driven service.
 
 - Execution is not sandboxed. Tests and linters run directly on the host, so only run it against repositories you trust, and supervise it. A containerized workspace is the intended next step.
-- There is no webhook service or job queue yet; issues are processed one at a time via the CLI.
 - Validation commands are configured in code rather than discovered per repository.
 - Only Python projects installable with `pip install -e ".[dev]"` are supported.

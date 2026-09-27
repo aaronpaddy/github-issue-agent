@@ -31,6 +31,19 @@ class ValidationOutcome:
 
 
 @dataclass
+class IssueComment:
+    author: str
+    body: str
+    # Set when the agent itself wrote the comment: what kind of message it was
+    # (clarification, no-change, declined, escalated, error).
+    agent_kind: str | None = None
+
+    @property
+    def is_agent(self) -> bool:
+        return self.agent_kind is not None
+
+
+@dataclass
 class Assessment:
     """The agent's own account of what it did and how sure it is."""
 
@@ -72,7 +85,7 @@ class Job:
     issue_number: int
     issue_title: str
     issue_body: str
-    issue_comments: list[str] = field(default_factory=list)
+    issue_comments: list[IssueComment] = field(default_factory=list)
 
     status: AgentStatus = AgentStatus.QUEUED
     max_attempts: int = 3
@@ -101,6 +114,8 @@ class Job:
     def issue_context(self) -> str:
         parts = [f"Issue #{self.issue_number}: {self.issue_title}", "", self.issue_body]
         if self.issue_comments:
-            parts.append("\nComments:")
-            parts.extend(f"- {c}" for c in self.issue_comments)
+            parts.append("\nComments, oldest first:")
+            for c in self.issue_comments:
+                who = f"@{c.author} (you, the agent, earlier)" if c.is_agent else f"@{c.author}"
+                parts.append(f"- {who}: {c.body}")
         return "\n".join(parts)

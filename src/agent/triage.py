@@ -21,7 +21,9 @@ TRIAGE_TOOL = "triage"
 SYSTEM_PROMPT = """\
 You review GitHub issues for an autonomous coding agent before it starts work. Decide whether \
 the issue's GOAL is defined well enough to act on without inventing requirements. Judge the \
-issue text alone; you cannot see the code.
+issue and its comments; you cannot see the code. A comment marked as from the agent is its own \
+earlier question, and a later reply from a person answers it: treat that reply as part of the \
+issue.
 
 An issue is ACTIONABLE when the goal is clear. That includes: a concrete bug (what happens \
 versus what should happen), specific behavior to add, tests for named code, and a question \
