@@ -300,3 +300,7 @@ Early-stage. It can run from the command line or as a webhook-driven service.
 - The sandbox protects the host, not the target repository's own secrets: a project whose tests genuinely need network access or credentials will fail its checks inside it (baseline and final results are compared, so this only blocks a fix that depends on them).
 - Validation commands are configured in code rather than discovered per repository.
 - Only Python projects installable with `pip install -e ".[dev]"` are supported.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
