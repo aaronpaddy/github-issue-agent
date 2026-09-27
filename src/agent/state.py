@@ -19,6 +19,8 @@ class AgentStatus(str, enum.Enum):
     OPENING_PR = "opening_pr"
     DONE = "done"
     ESCALATED = "escalated"
+    NEEDS_CLARIFICATION = "needs_clarification"
+    NO_CHANGE_NEEDED = "no_change_needed"
 
 
 @dataclass
@@ -26,6 +28,32 @@ class ValidationOutcome:
     passed: bool
     checks: dict[str, bool]  # e.g. {"pytest": True, "ruff": False, ...}
     detail: str
+
+
+@dataclass
+class Assessment:
+    """The agent's own account of what it did and how sure it is."""
+
+    summary: str
+    confidence: str  # "high" | "medium" | "low"
+    interpretation: str
+    assumptions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Clarification:
+    """A question the agent needs answered before it can act."""
+
+    question: str
+    findings: str
+
+
+@dataclass
+class NoChangeNeeded:
+    """The agent's finding that the issue needs no code change (already fixed, intended, ...)."""
+
+    reason: str
+    evidence: str
 
 
 @dataclass
@@ -53,6 +81,9 @@ class Job:
     branch_name: str | None = None
     pr_url: str | None = None
     escalation_reason: str | None = None
+    assessment: Assessment | None = None
+    clarification: Clarification | None = None
+    no_change: NoChangeNeeded | None = None
 
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None

@@ -15,6 +15,7 @@ import os
 import subprocess
 from pathlib import Path
 
+from src.agent.policy import DiffStats
 from src.agent.workspace import LocalWorkspace
 
 # Test/lint caches are produced by validation runs and must never be committed,
@@ -55,6 +56,22 @@ def clone_repo(repo_full_name: str, dest: Path, token: str) -> None:
     exclude.parent.mkdir(parents=True, exist_ok=True)
     with exclude.open("a", encoding="utf-8") as f:
         f.write("\n".join(LOCAL_EXCLUDES) + "\n")
+
+
+def diff_stats(workspace: LocalWorkspace) -> DiffStats:
+    """Files and line counts the fix changes, including new files."""
+    root = workspace.root
+    _git(["add", "-A"], root)
+    numstat = _git(["diff", "--cached", "--numstat", "--no-renames"], root)
+    files: list[str] = []
+    added = deleted = 0
+    for line in numstat.splitlines():
+        adds, dels, path = line.split("\t", 2)
+        files.append(path)
+        if adds != "-":  # binary files report "-"
+            added += int(adds)
+            deleted += int(dels)
+    return DiffStats(files=tuple(files), lines_added=added, lines_deleted=deleted)
 
 
 def create_commit_and_push(

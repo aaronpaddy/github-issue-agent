@@ -37,6 +37,7 @@ Fetch issue + comments ──► Copy repo into a fresh working directory
 - **Path-jailed workspace.** Every file operation resolves inside the workspace root, so `../` traversal is rejected.
 - **Structured edits.** `edit_file` replaces an exact, unique excerpt rather than rewriting whole files, which keeps changes small and reviewable.
 - **Never merges.** The agent opens pull requests only. It does not merge, force-push, or touch protected branches.
+- **Knows when not to act.** It will decline vague issues, report issues that need no change, and downgrade uncertain work to a draft. See the judgment layer below.
 
 ### Tools
 
@@ -105,6 +106,24 @@ Each run:
 3. Runs every check once before the agent starts to capture a baseline.
 4. Runs the agent loop. After each attempt the checks run again and are compared with the baseline.
 
+### Judgment layer
+
+Passing checks proves a change is *safe*, not that it is *right*. So the agent makes a series of decisions about whether and how to present its work, and the important ones are made by the application rather than trusted to the model.
+
+1. **Triage before any work.** A small, separate model call reads only the issue text and decides whether the *goal* is defined. A vague issue ("support other currencies") gets a specific question posted on it, before anything is cloned or installed. Missing details don't trigger it, because the agent picks sensible defaults and states them. It fails open, so a triage hiccup never blocks real work.
+2. **Three honest ways to finish.** Instead of just stopping, the agent calls one of: `submit_result` (a summary plus a confidence, its interpretation, and its assumptions), `request_clarification` (stop and ask), or `report_no_change_needed` (already fixed, not reproducible, or intended). If it runs out of tool calls it still gets one last round to self-assess.
+3. **A policy decides how the work is presented.** Self-reported confidence is poorly calibrated, so it is combined with objective signals and the most conservative one wins:
+
+   | Situation | Outcome |
+   |---|---|
+   | High confidence, one attempt, tests included, modest diff | Normal PR that closes the issue (`Fixes #N`) |
+   | Medium confidence, a retry was needed, source changed without tests, or a large diff | **Draft** PR that only references the issue (`Refs #N`), with the reasons listed |
+   | Low confidence or no self-assessment | No PR; the reasoning is posted on the issue |
+
+4. **Awareness of other work.** It skips issues that are closed, are pull requests, or already have an open agent PR, uses a unique branch name if an old one exists, and warns in the PR when another open PR touches the same files.
+
+Every PR carries a "Reviewer notes" section with the confidence, the interpretation, the assumptions, and any reasons it is a draft.
+
 ### Cost controls
 
 Every model call is priced from the API's reported token usage, and a run stops before its next call once `MAX_BUDGET_USD` is spent, escalating instead of continuing. The actual spend is printed at the end of each run. To keep runs cheap:
@@ -137,6 +156,9 @@ The test suite uses a scripted fake LLM, so it makes no API calls and covers the
 src/
   agent/
     core.py         # AgentLoop: the reason/act/observe loop and retry cap
+    triage.py       # Pre-flight gate: is the issue's goal defined?
+    assessment.py   # The terminal tools: submit_result, request_clarification, report_no_change_needed
+    policy.py       # Decides PR vs draft PR vs comment from confidence and objective signals
     llm.py          # Thin wrapper over the Anthropic SDK's tool-use API
     state.py        # Job, AgentStatus, Attempt, ValidationOutcome
     cost.py         # Token/dollar accounting and the per-run budget
@@ -145,7 +167,9 @@ src/
     workspace.py    # Workspace interface and the path-jailed local implementation
     tools/          # The nine tools and the tool registry
   github/
-    client.py       # Read issues, comment, open pull requests (PyGithub)
+    auth.py         # GitHub App or token authentication, and the commit identity
+    client.py       # Issues, PRs, drafts, overlap and duplicate detection (PyGithub)
+    messages.py     # PR descriptions and issue comments
     git_ops.py      # Clean clone, commit, and push (token via env, never in URLs)
   config.py         # Environment-driven settings
   cli.py            # Command-line entry point

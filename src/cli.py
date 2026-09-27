@@ -11,7 +11,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 import uuid
 from pathlib import Path
@@ -22,34 +21,25 @@ from src.agent.core import AgentLoop
 from src.agent.cost import CostTracker
 from src.agent.environment import create_python_env
 from src.agent.llm import LLMClient
+from src.agent.policy import Action, decide
 from src.agent.state import AgentStatus, Job
 from src.agent.tools import default_registry
+from src.agent.triage import triage_issue
 from src.agent.validator import Validator
 from src.agent.workspace import LocalWorkspace
 from src.config import load_settings
 from src.github.auth import resolve_auth
 from src.github.client import GitHubClient
-from src.github.git_ops import clone_repo, create_commit_and_push
+from src.github.git_ops import clone_repo, create_commit_and_push, diff_stats
+from src.github.messages import (
+    build_pr_body,
+    clarification_comment,
+    declined_comment,
+    escalation_comment,
+    no_change_comment,
+)
 
 logger = structlog.get_logger(__name__)
-
-
-_HEADING = re.compile(r"^#{1,6}\s", re.MULTILINE)
-
-
-def build_pr_body(issue_number: int, summary: str, attempts: int) -> str:
-    summary = summary.strip()
-    # The model often writes its own headings, sometimes after a line of chatter. If it did,
-    # keep everything from its first heading; otherwise supply one.
-    heading = _HEADING.search(summary)
-    summary = summary[heading.start() :] if heading else f"## Summary\n{summary}"
-    return (
-        f"Fixes #{issue_number}\n\n"
-        f"{summary}\n\n"
-        "## Validation\n"
-        "No new issues from pytest, ruff, black, or mypy compared with the base branch, "
-        f"after {attempts} attempt(s)."
-    )
 
 
 def main() -> None:
@@ -73,6 +63,18 @@ def main() -> None:
     logger.info("fetching issue", repo=settings.github_repo, issue=args.issue)
     issue = github.get_issue(args.issue)
 
+    if issue.is_pull_request:
+        print(f"SKIPPED: #{issue.number} is a pull request, not an issue.")
+        return
+    if issue.state != "open":
+        print(f"SKIPPED: issue #{issue.number} is {issue.state}.")
+        return
+
+    existing = github.find_open_agent_pr(issue.number)
+    if existing:
+        print(f"SKIPPED: issue #{issue.number} already has an open agent PR: {existing.url}")
+        return
+
     job = Job(
         id=str(uuid.uuid4()),
         repo=settings.github_repo,
@@ -82,6 +84,18 @@ def main() -> None:
         issue_comments=issue.comments,
         max_attempts=settings.max_attempts,
     )
+
+    cost = CostTracker(model=settings.claude_model, budget_usd=settings.max_budget_usd)
+    llm = LLMClient(model=settings.claude_model, api_key=settings.anthropic_api_key or None, cost=cost)
+
+    vague = triage_issue(llm, job)
+    if vague:
+        logger.info("triage: needs clarification", job_id=job.id)
+        if not args.dry_run:
+            github.comment_on_issue(job.issue_number, clarification_comment(vague))
+        print(f"API usage: {cost.summary()}")
+        print(f"NEEDS CLARIFICATION (before any work): {vague.question}\n\n{vague.findings}")
+        return
 
     job_dir = Path(settings.workspaces_dir).resolve() / job.id
     repo_dir = job_dir / "repo"
@@ -100,9 +114,8 @@ def main() -> None:
     for name, res in baseline.items():
         logger.info("baseline", check=name, passed=res.passed, issues=sum(res.issues.values()))
 
-    cost = CostTracker(model=settings.claude_model, budget_usd=settings.max_budget_usd)
     loop = AgentLoop(
-        llm=LLMClient(model=settings.claude_model, api_key=settings.anthropic_api_key or None, cost=cost),
+        llm=llm,
         tools=default_registry(),
         validate_fn=validator.validate,
     )
@@ -111,25 +124,58 @@ def main() -> None:
     result = loop.run(job, workspace)
     print(f"API usage: {cost.summary()}")
 
+    if job.status == AgentStatus.NEEDS_CLARIFICATION and job.clarification:
+        logger.info("asking for clarification", job_id=job.id)
+        if not args.dry_run:
+            github.comment_on_issue(job.issue_number, clarification_comment(job.clarification))
+        print(f"NEEDS CLARIFICATION: {job.clarification.question}\n\n{job.clarification.findings}")
+        return
+
+    if job.status == AgentStatus.NO_CHANGE_NEEDED and job.no_change:
+        logger.info("no change needed", job_id=job.id)
+        if not args.dry_run:
+            github.comment_on_issue(job.issue_number, no_change_comment(job.no_change))
+        print(f"NO CHANGE NEEDED: {job.no_change.reason}\n\n{job.no_change.evidence}")
+        return
+
     if not result.success:
         logger.warning("escalating", job_id=job.id)
         if not args.dry_run:
-            github.comment_on_issue(
-                job.issue_number,
-                "I attempted this issue but couldn't reach a validated fix.\n\n"
-                f"{job.escalation_reason}",
-            )
+            github.comment_on_issue(job.issue_number, escalation_comment(job.escalation_reason or ""))
         print(f"ESCALATED: {job.escalation_reason}")
         sys.exit(1)
 
+    stats = diff_stats(workspace)
+    decision = decide(job.assessment, len(job.attempts), stats)
+    assessment = job.assessment
     print(f"VALIDATED FIX:\n{result.summary}\n")
-    print(workspace.run(["git", "diff"]).stdout)
+    if assessment:
+        print(f"Self-assessment: {assessment.confidence} confidence. {assessment.interpretation}")
+        for assumption in assessment.assumptions:
+            print(f"  assumption: {assumption}")
+    print(
+        f"Policy decision: {decision.action.value} "
+        f"({len(stats.files)} files, {stats.changed_lines} changed lines)"
+    )
+    for reason in decision.reasons:
+        print(f"  - {reason}")
+    print(workspace.run(["git", "diff", "--cached"]).stdout)
+
+    if decision.action == Action.COMMENT_ONLY:
+        if not args.dry_run:
+            github.comment_on_issue(job.issue_number, declined_comment(assessment, decision))
+        print("(no pull request opened)")
+        return
+
+    overlaps = github.overlapping_prs(stats.files)
+    for overlap in overlaps:
+        print(f"Overlaps with open PR #{overlap.number} on: {', '.join(overlap.files)}")
 
     if args.dry_run:
         print(f"(dry run: not pushing. Workspace kept at {repo_dir})")
         return
 
-    branch_name = f"issue-agent/issue-{job.issue_number}"
+    branch_name = github.branch_name_for(job.issue_number, job.id)
     commit_message = f"Fix #{job.issue_number}: {job.issue_title}"
     create_commit_and_push(
         workspace,
@@ -141,16 +187,25 @@ def main() -> None:
         author_email=auth.commit_email,
     )
 
-    pr_body = build_pr_body(job.issue_number, result.summary, len(job.attempts))
+    pr_body = build_pr_body(
+        job.issue_number,
+        assessment.summary if assessment and assessment.summary else result.summary,
+        len(job.attempts),
+        assessment=assessment,
+        decision=decision,
+        overlaps=overlaps,
+    )
     pr_url = github.open_pull_request(
         branch=branch_name,
         title=commit_message,
         body=pr_body,
         base=github.default_branch(),
+        draft=decision.action == Action.OPEN_DRAFT_PR,
     )
     job.pr_url = pr_url
     job.status = AgentStatus.DONE
-    print(f"PR opened: {pr_url}")
+    kind = "Draft PR" if decision.action == Action.OPEN_DRAFT_PR else "PR"
+    print(f"{kind} opened: {pr_url}")
 
 
 if __name__ == "__main__":
