@@ -1,5 +1,5 @@
 from src.agent.state import IssueComment
-from src.github.threads import ERROR, parse_comment, skip_reason, tag
+from src.github.threads import ERROR, clarification_rounds, parse_comment, skip_reason, tag
 
 
 def agent(kind: str) -> IssueComment:
@@ -64,3 +64,26 @@ def test_reply_is_ignored_when_no_answer_has_actually_arrived():
 def test_reply_to_an_old_question_is_ignored_once_the_agent_moved_on():
     thread = [agent("clarification"), HUMAN, agent("no-change"), HUMAN]
     assert skip_reason("reply", thread) is not None
+
+
+def test_clarification_rounds_counts_only_the_agents_questions():
+    thread = [
+        HUMAN,
+        agent("clarification"),
+        HUMAN,
+        agent("clarification"),
+        agent("no-change"),
+        HUMAN,
+    ]
+    assert clarification_rounds(thread) == 2
+    assert clarification_rounds([]) == 0
+
+
+def test_parse_comment_keeps_the_comment_id():
+    assert parse_comment("ann", "hi", 42).id == 42
+    assert parse_comment("bot[bot]", tag("q", "clarification"), 43).id == 43
+
+
+def test_a_gave_up_comment_ends_the_conversation():
+    assert skip_reason("label", [HUMAN, agent("gave-up")]) is not None
+    assert skip_reason("reply", [agent("clarification"), HUMAN, agent("gave-up"), HUMAN]) is not None

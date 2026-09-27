@@ -76,6 +76,7 @@ Fill in `.env`:
 | `CLAUDE_MODEL` | Model ID (default `claude-sonnet-5`) |
 | `MAX_ATTEMPTS` | Max implement/validate cycles per issue (default `2`) |
 | `MAX_BUDGET_USD` | Hard spend cap per run in USD (default `1.00`) |
+| `MAX_CLARIFICATION_ROUNDS` | How many times the agent may ask for clarification on one issue before giving up (default `3`) |
 | `WORKSPACES_DIR` | Where per-run clones and virtualenvs are created (default `workspaces`) |
 | `KEEP_WORKSPACES` | Keep each run's clone and virtualenv instead of deleting them (default `false`) |
 | `WEBHOOK_SECRET` | Service only. Shared secret GitHub signs webhooks with |
@@ -125,7 +126,7 @@ Passing checks proves a change is *safe*, not that it is *right*. So the agent m
    | Medium confidence, an earlier attempt failed the tests, source changed without tests, or a large diff | **Draft** PR that only references the issue (`Refs #N`), with the reasons listed |
    | Low confidence or no self-assessment | No PR; the reasoning is posted on the issue |
 
-4. **It holds a conversation.** Every comment the agent posts carries a hidden marker recording its kind (clarification, no-change, declined, escalated, error), and comments reach the model labelled with who wrote them, so it can tell its own earlier question from your answer. When it asks a clarifying question and a person replies, the service resumes automatically. A rule checked *before any model call* keeps it from repeating itself: a label on an issue where the agent already had the last word is skipped ("reply on the issue to continue"), and a reply is ignored unless the agent was actually waiting for one.
+4. **It holds a conversation.** Every comment the agent posts carries a hidden marker recording its kind (clarification, no-change, declined, escalated, error), and comments reach the model labelled with who wrote them, so it can tell its own earlier question from your answer. When it asks a clarifying question and a person replies, the service resumes automatically. A rule checked *before any model call* keeps it from repeating itself: a label on an issue where the agent already had the last word is skipped ("reply on the issue to continue"), and a reply is ignored unless the agent was actually waiting for one. A resumed run marks your answer with a 👀 so you can see it was noticed. The agent asks at most `MAX_CLARIFICATION_ROUNDS` times (default 3); after that, instead of another question it posts one final comment saying a maintainer needs to define what's wanted, and stops.
 5. **Awareness of other work.** It skips issues that are closed, are pull requests, or already have an open agent PR, uses a unique branch name if an old one exists, and warns in the PR when another open PR touches the same files.
 
 Every PR carries a "Reviewer notes" section with the confidence, the interpretation, the assumptions, and any reasons it is a draft.

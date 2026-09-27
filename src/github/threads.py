@@ -19,6 +19,7 @@ NO_CHANGE = "no-change"
 DECLINED = "declined"
 ESCALATED = "escalated"
 ERROR = "error"
+GAVE_UP = "gave-up"
 
 
 def tag(body: str, kind: str) -> str:
@@ -26,12 +27,22 @@ def tag(body: str, kind: str) -> str:
     return f"{body.rstrip()}\n\n<!-- issue-agent:{kind} -->"
 
 
-def parse_comment(author: str, body: str) -> IssueComment:
+def parse_comment(author: str, body: str, comment_id: int | None = None) -> IssueComment:
     """Build an IssueComment, stripping the marker and recording the kind if there is one."""
     match = _MARKER.search(body)
     if not match:
-        return IssueComment(author=author, body=body.strip())
-    return IssueComment(author=author, body=body[: match.start()].strip(), agent_kind=match.group(1))
+        return IssueComment(author=author, body=body.strip(), id=comment_id)
+    return IssueComment(
+        author=author,
+        body=body[: match.start()].strip(),
+        agent_kind=match.group(1),
+        id=comment_id,
+    )
+
+
+def clarification_rounds(comments: Sequence[IssueComment]) -> int:
+    """How many times the agent has already asked for clarification on this issue."""
+    return sum(1 for c in comments if c.agent_kind == CLARIFICATION)
 
 
 def skip_reason(trigger: str, comments: Sequence[IssueComment]) -> str | None:

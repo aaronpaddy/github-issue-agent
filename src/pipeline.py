@@ -22,7 +22,7 @@ from src.agent.cost import CostTracker
 from src.agent.environment import create_python_env
 from src.agent.llm import LLMClient
 from src.agent.policy import Action, decide
-from src.agent.state import AgentStatus, Job
+from src.agent.state import AgentStatus, Clarification, Job
 from src.agent.tools import default_registry
 from src.agent.triage import triage_issue
 from src.agent.validator import Validator
@@ -36,9 +36,18 @@ from src.github.messages import (
     clarification_comment,
     declined_comment,
     escalation_comment,
+    gave_up_comment,
     no_change_comment,
 )
-from src.github.threads import CLARIFICATION, DECLINED, ESCALATED, NO_CHANGE, skip_reason
+from src.github.threads import (
+    CLARIFICATION,
+    DECLINED,
+    ESCALATED,
+    GAVE_UP,
+    NO_CHANGE,
+    clarification_rounds,
+    skip_reason,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -48,6 +57,7 @@ Emit = Callable[[str], None]
 class Outcome(str, enum.Enum):
     SKIPPED = "skipped"
     NEEDS_CLARIFICATION = "needs_clarification"
+    GAVE_UP = "gave_up"  # asked as many times as allowed and it is still too vague
     NO_CHANGE_NEEDED = "no_change_needed"
     ESCALATED = "escalated"
     DECLINED = "declined"  # a validated change, but not confident enough to open a PR
@@ -63,6 +73,28 @@ class RunResult:
     pr_url: str | None = None
     spent_usd: float = 0.0
     workspace: Path | None = None
+
+
+def ask_or_give_up(
+    github: GitHubClient,
+    issue_number: int,
+    clarification: Clarification,
+    rounds: int,
+    max_rounds: int,
+    dry_run: bool,
+) -> Outcome:
+    """Post the clarification question, or, once the agent has already asked `max_rounds` times,
+    a final comment saying it is stopping. The cap applies when asking, not when resuming, so an
+    answer to the last allowed question still gets a fair chance to make the issue actionable."""
+    give_up = rounds >= max_rounds
+    if not dry_run:
+        if give_up:
+            github.comment_on_issue(issue_number, gave_up_comment(clarification, rounds), GAVE_UP)
+        else:
+            github.comment_on_issue(
+                issue_number, clarification_comment(clarification), CLARIFICATION
+            )
+    return Outcome.GAVE_UP if give_up else Outcome.NEEDS_CLARIFICATION
 
 
 def run_issue(
@@ -120,7 +152,12 @@ def _run(
         return RunResult(Outcome.SKIPPED, "already has an open agent PR", pr_url=existing.url)
 
     if not dry_run:
-        github.acknowledge(issue.number)
+        # On a reply, mark the answer itself as seen; otherwise mark the issue.
+        answer = next((c for c in reversed(issue.comments) if not c.is_agent), None)
+        if trigger == "reply" and answer is not None and answer.id is not None:
+            github.acknowledge_comment(issue.number, answer.id)
+        else:
+            github.acknowledge(issue.number)
 
     job = Job(
         id=str(uuid.uuid4()),
@@ -135,14 +172,17 @@ def _run(
     cost = CostTracker(model=settings.claude_model, budget_usd=settings.max_budget_usd)
     llm = LLMClient(model=settings.claude_model, api_key=settings.anthropic_api_key or None, cost=cost)
 
+    rounds = clarification_rounds(issue.comments)
     vague = triage_issue(llm, job)
     if vague:
-        logger.info("triage: needs clarification", job_id=job.id)
-        if not dry_run:
-            github.comment_on_issue(job.issue_number, clarification_comment(vague), CLARIFICATION)
+        logger.info("triage: needs clarification", job_id=job.id, rounds=rounds)
+        outcome = ask_or_give_up(
+            github, job.issue_number, vague, rounds, settings.max_clarification_rounds, dry_run
+        )
+        label = "GAVE UP" if outcome == Outcome.GAVE_UP else "NEEDS CLARIFICATION"
         emit(f"API usage: {cost.summary()}")
-        emit(f"NEEDS CLARIFICATION (before any work): {vague.question}\n\n{vague.findings}")
-        return RunResult(Outcome.NEEDS_CLARIFICATION, vague.question, spent_usd=cost.spent_usd)
+        emit(f"{label} (before any work): {vague.question}\n\n{vague.findings}")
+        return RunResult(outcome, vague.question, spent_usd=cost.spent_usd)
 
     job_dir = Path(settings.workspaces_dir).resolve() / job.id
     repo_dir = job_dir / "repo"
@@ -171,13 +211,18 @@ def _run(
         return RunResult(outcome, detail, pr_url, spent_usd=cost.spent_usd, workspace=repo_dir)
 
     if job.status == AgentStatus.NEEDS_CLARIFICATION and job.clarification:
-        logger.info("asking for clarification", job_id=job.id)
-        if not dry_run:
-            github.comment_on_issue(
-                job.issue_number, clarification_comment(job.clarification), CLARIFICATION
-            )
-        emit(f"NEEDS CLARIFICATION: {job.clarification.question}\n\n{job.clarification.findings}")
-        return done(Outcome.NEEDS_CLARIFICATION, job.clarification.question)
+        logger.info("asking for clarification", job_id=job.id, rounds=rounds)
+        outcome = ask_or_give_up(
+            github,
+            job.issue_number,
+            job.clarification,
+            rounds,
+            settings.max_clarification_rounds,
+            dry_run,
+        )
+        label = "GAVE UP" if outcome == Outcome.GAVE_UP else "NEEDS CLARIFICATION"
+        emit(f"{label}: {job.clarification.question}\n\n{job.clarification.findings}")
+        return done(outcome, job.clarification.question)
 
     if job.status == AgentStatus.NO_CHANGE_NEEDED and job.no_change:
         logger.info("no change needed", job_id=job.id)

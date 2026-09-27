@@ -72,6 +72,15 @@ def clarification_comment(clarification: Clarification) -> str:
     )
 
 
+def gave_up_comment(clarification: Clarification, rounds: int) -> str:
+    return (
+        f"I've asked for clarification {rounds} times and this still isn't specific enough for "
+        "me to act on without guessing, so I'm going to stop here rather than keep asking. A "
+        "maintainer will need to spell out what's wanted, or close the issue.\n\n"
+        f"**The question I was about to ask**\n{clarification.question}"
+    )
+
+
 def no_change_comment(finding: NoChangeNeeded) -> str:
     return (
         "I investigated this and don't think a code change is needed.\n\n"

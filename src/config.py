@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-5"
     max_attempts: int = 2
     max_budget_usd: float = 1.00
+    max_clarification_rounds: int = 3
     workspaces_dir: str = "workspaces"
     keep_workspaces: bool = False  # keep each run's clone and venv (debugging)
 

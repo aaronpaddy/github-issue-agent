@@ -6,7 +6,7 @@ from src import pipeline
 from src.agent.state import Clarification, IssueComment
 from src.config import Settings
 from src.github.client import ExistingPR, IssueContext
-from src.pipeline import Outcome, run_issue
+from src.pipeline import Outcome, ask_or_give_up, run_issue
 
 
 class FakeGitHub:
@@ -15,6 +15,7 @@ class FakeGitHub:
         self.existing = existing
         self.comments: list[tuple[int, str]] = []
         self.acknowledged: list[int] = []
+        self.acknowledged_comments: list[tuple[int, int]] = []
 
     def get_issue(self, number):
         return self.issue
@@ -24,6 +25,9 @@ class FakeGitHub:
 
     def acknowledge(self, number):
         self.acknowledged.append(number)
+
+    def acknowledge_comment(self, issue_number, comment_id):
+        self.acknowledged_comments.append((issue_number, comment_id))
 
     def comment_on_issue(self, number, body, kind="note"):
         self.comments.append((number, body, kind))
@@ -192,3 +196,96 @@ def test_a_reply_to_a_clarification_resumes_the_run(monkeypatch, settings):
     assert result.outcome == Outcome.NEEDS_CLARIFICATION  # got past the skip check and reached triage
     assert "(you, the agent, earlier): Which currencies?" in seen["context"]
     assert "@ann: USD and EUR, symbols only." in seen["context"]
+
+
+def question() -> Clarification:
+    return Clarification("Which currencies?", "unclear")
+
+
+def test_a_question_is_posted_while_under_the_cap():
+    github = FakeGitHub(make_issue())
+    outcome = ask_or_give_up(github, 5, question(), rounds=2, max_rounds=3, dry_run=False)
+    assert outcome == Outcome.NEEDS_CLARIFICATION
+    assert [c[2] for c in github.comments] == ["clarification"]
+
+
+def test_at_the_cap_it_posts_a_final_comment_instead_of_another_question():
+    github = FakeGitHub(make_issue())
+    outcome = ask_or_give_up(github, 5, question(), rounds=3, max_rounds=3, dry_run=False)
+    assert outcome == Outcome.GAVE_UP
+    assert [c[2] for c in github.comments] == ["gave-up"]
+    assert "3 times" in github.comments[0][1]
+
+
+def test_a_dry_run_posts_nothing_either_way():
+    github = FakeGitHub(make_issue())
+    assert ask_or_give_up(github, 5, question(), 0, 3, dry_run=True) == Outcome.NEEDS_CLARIFICATION
+    assert ask_or_give_up(github, 5, question(), 3, 3, dry_run=True) == Outcome.GAVE_UP
+    assert github.comments == []
+
+
+def three_rounds_thread():
+    thread = []
+    for i in range(3):
+        thread += [
+            IssueComment("bot[bot]", f"q{i}", agent_kind="clarification", id=100 + i),
+            IssueComment("ann", f"a{i}", id=200 + i),
+        ]
+    return thread
+
+
+def test_a_fourth_vague_answer_makes_the_run_give_up(monkeypatch, settings):
+    github = FakeGitHub(make_issue(comments=three_rounds_thread()))
+    wire(monkeypatch, github, triage=lambda llm, job: question())
+    result, messages = run(settings, trigger="reply")
+
+    assert result.outcome == Outcome.GAVE_UP
+    assert github.comments[-1][2] == "gave-up"
+    assert messages[-1].startswith("GAVE UP")
+
+
+def test_a_clear_answer_after_the_last_allowed_question_still_gets_a_chance(monkeypatch, settings):
+    # Three questions were asked, but triage is now satisfied: the run must proceed, not give up.
+    github = FakeGitHub(make_issue(comments=three_rounds_thread()))
+    proceeded = []
+
+    def triage_passes(llm, job):
+        proceeded.append(True)
+
+    def no_env(*args, **kwargs):
+        raise RuntimeError("reached cloning")  # proves we got past triage
+
+    wire(monkeypatch, github, triage=triage_passes)
+    monkeypatch.setattr(pipeline, "clone_repo", no_env)
+    with pytest.raises(RuntimeError, match="reached cloning"):
+        run(settings, trigger="reply")
+    assert proceeded == [True]
+    assert github.comments == []
+
+
+def test_a_reply_run_reacts_to_the_answer_not_the_issue(monkeypatch, settings):
+    thread = [IssueComment("bot[bot]", "q", agent_kind="clarification", id=1), IssueComment("ann", "a", id=77)]
+    github = FakeGitHub(make_issue(comments=thread))
+    wire(monkeypatch, github, triage=lambda llm, job: question())
+    run(settings, trigger="reply")
+
+    assert github.acknowledged_comments == [(5, 77)]
+    assert github.acknowledged == []
+
+
+def test_a_label_run_reacts_to_the_issue(monkeypatch, settings):
+    github = FakeGitHub(make_issue())
+    wire(monkeypatch, github, triage=lambda llm, job: question())
+    run(settings, trigger="label")
+
+    assert github.acknowledged == [5]
+    assert github.acknowledged_comments == []
+
+
+def test_a_dry_run_reacts_to_nothing(monkeypatch, settings):
+    thread = [IssueComment("bot[bot]", "q", agent_kind="clarification", id=1), IssueComment("ann", "a", id=77)]
+    github = FakeGitHub(make_issue(comments=thread))
+    wire(monkeypatch, github, triage=lambda llm, job: question())
+    run(settings, dry_run=True, trigger="reply")
+    assert github.acknowledged == []
+    assert github.acknowledged_comments == []

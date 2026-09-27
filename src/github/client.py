@@ -53,7 +53,7 @@ class GitHubClient:
 
     def get_issue(self, number: int) -> IssueContext:
         issue = self.repo.get_issue(number)
-        comments = [parse_comment(c.user.login, c.body or "") for c in issue.get_comments()]
+        comments = [parse_comment(c.user.login, c.body or "", c.id) for c in issue.get_comments()]
         return IssueContext(
             number=issue.number,
             title=issue.title,
@@ -71,6 +71,13 @@ class GitHubClient:
         """React to the issue so people can see it has been picked up. Best effort."""
         try:
             self.repo.get_issue(number).create_reaction("eyes")
+        except GithubException:
+            pass
+
+    def acknowledge_comment(self, issue_number: int, comment_id: int) -> None:
+        """React to a specific comment, so its author can see it was noticed. Best effort."""
+        try:
+            self.repo.get_issue(issue_number).get_comment(comment_id).create_reaction("eyes")
         except GithubException:
             pass
 

@@ -37,6 +37,7 @@ class IssueComment:
     # Set when the agent itself wrote the comment: what kind of message it was
     # (clarification, no-change, declined, escalated, error).
     agent_kind: str | None = None
+    id: int | None = None
 
     @property
     def is_agent(self) -> bool:

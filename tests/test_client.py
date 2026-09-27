@@ -95,8 +95,9 @@ def test_get_issue_reports_state_and_whether_it_is_a_pull_request():
             state="closed",
             pull_request=None,
             get_comments=lambda: [
-                SimpleNamespace(user=SimpleNamespace(login="ann"), body="hi"),
+                SimpleNamespace(id=11, user=SimpleNamespace(login="ann"), body="hi"),
                 SimpleNamespace(
+                    id=12,
                     user=SimpleNamespace(login="bot[bot]"),
                     body="Which one?\n\n<!-- issue-agent:clarification -->",
                 ),
@@ -107,9 +108,9 @@ def test_get_issue_reports_state_and_whether_it_is_a_pull_request():
     assert issue.state == "closed"
     assert not issue.is_pull_request
     assert issue.body == ""
-    assert [(c.author, c.body, c.agent_kind) for c in issue.comments] == [
-        ("ann", "hi", None),
-        ("bot[bot]", "Which one?", "clarification"),
+    assert [(c.author, c.body, c.agent_kind, c.id) for c in issue.comments] == [
+        ("ann", "hi", None, 11),
+        ("bot[bot]", "Which one?", "clarification", 12),
     ]
 
 
@@ -120,3 +121,19 @@ def test_comments_are_posted_with_the_agents_marker():
     )
     make_client(repo).comment_on_issue(5, "What do you mean?", kind="clarification")
     assert posted == ["What do you mean?\n\n<!-- issue-agent:clarification -->"]
+
+
+def test_acknowledging_a_comment_reacts_to_that_comment():
+    reactions = []
+    comment = SimpleNamespace(create_reaction=lambda kind: reactions.append(kind))
+    issue = SimpleNamespace(get_comment=lambda comment_id: comment if comment_id == 77 else None)
+    make_client(SimpleNamespace(get_issue=lambda n: issue if n == 5 else None)).acknowledge_comment(5, 77)
+    assert reactions == ["eyes"]
+
+
+def test_acknowledging_never_raises():
+    def boom(kind):
+        raise GithubException(403, {}, {})
+
+    issue = SimpleNamespace(get_comment=lambda comment_id: SimpleNamespace(create_reaction=boom))
+    make_client(SimpleNamespace(get_issue=lambda n: issue)).acknowledge_comment(5, 77)

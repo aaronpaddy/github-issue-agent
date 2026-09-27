@@ -6,6 +6,7 @@ from src.github.messages import (
     clarification_comment,
     declined_comment,
     escalation_comment,
+    gave_up_comment,
     no_change_comment,
 )
 
@@ -92,3 +93,10 @@ def test_no_change_comment_explains_and_does_not_claim_to_close():
     assert "Already fixed." in text
     assert "See PR #9." in text
     assert "haven't closed the issue" in text
+
+
+def test_gave_up_comment_says_how_often_it_asked_and_what_it_was_about_to_ask():
+    text = gave_up_comment(Clarification(question="Which currencies?", findings="x"), rounds=3)
+    assert "3 times" in text
+    assert "Which currencies?" in text
+    assert "maintainer" in text
