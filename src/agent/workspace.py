@@ -9,6 +9,7 @@ any tool code).
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,10 +59,12 @@ class LocalWorkspace(Workspace):
     Workspace implementation instead.
     """
 
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, env: dict[str, str] | None = None):
         self.root = Path(root).resolve()
         if not self.root.is_dir():
             raise ValueError(f"workspace root does not exist: {self.root}")
+        # Overrides layered onto os.environ for every command, e.g. a venv's PATH.
+        self.env: dict[str, str] = dict(env or {})
 
     def resolve(self, relative_path: str) -> Path:
         candidate = (self.root / relative_path).resolve()
@@ -105,6 +108,7 @@ class LocalWorkspace(Workspace):
                 text=True,
                 timeout=timeout,
                 check=False,
+                env={**os.environ, **self.env},
             )
             return CommandResult(proc.returncode, proc.stdout, proc.stderr)
         except subprocess.TimeoutExpired as e:

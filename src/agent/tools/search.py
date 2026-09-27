@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agent.tools.base import Tool, ToolResult
+from src.agent.tools.base import Tool, ToolResult, truncate
 from src.agent.workspace import Workspace
 
 _EXCLUDE_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules"}
+MAX_SEARCH_CHARS = 8000
 
 
 def _search_code(ws: Workspace, args: dict[str, Any]) -> ToolResult:
@@ -33,7 +34,7 @@ def _search_code(ws: Workspace, args: dict[str, Any]) -> ToolResult:
         return ToolResult.failure(result.stderr or "search failed")
     lines = result.stdout.strip().splitlines()
     truncated = lines[:200]
-    output = "\n".join(truncated)
+    output = truncate("\n".join(truncated), MAX_SEARCH_CHARS)
     if len(lines) > 200:
         output += f"\n... ({len(lines) - 200} more matches truncated)"
     return ToolResult.success(output)

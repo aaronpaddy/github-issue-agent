@@ -13,3 +13,4 @@ build/
 
 # Local planning notes
 docs/
+*.pem

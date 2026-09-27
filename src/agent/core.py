@@ -17,17 +17,18 @@ from collections.abc import Callable
 
 import structlog
 
+from src.agent.cost import BudgetExceededError
 from src.agent.llm import LLMClient
 from src.agent.state import AgentStatus, Attempt, Job, ValidationOutcome
 from src.agent.tools.base import ToolRegistry
-from src.agent.validator import validate as default_validate
+from src.agent.validator import Validator
 from src.agent.workspace import Workspace
 
 ValidateFn = Callable[[Workspace], ValidationOutcome]
 
 logger = structlog.get_logger(__name__)
 
-MAX_TOOL_ITERATIONS_PER_ATTEMPT = 25
+MAX_TOOL_ITERATIONS_PER_ATTEMPT = 20
 
 SYSTEM_PROMPT = """\
 You are an autonomous software engineering agent. You have been assigned a \
@@ -49,6 +50,11 @@ application will then run the full validation suite (tests, lint, format, \
 types) itself and tell you the authoritative result — if it fails, you'll \
 get the failure output back and should continue fixing the issue.
 
+Be economical: every tool result is re-read on each later step and costs \
+money. Prefer search_code to locate code, then read only the line ranges you \
+need instead of whole files, and avoid repeating calls whose results you \
+already have.
+
 Do not claim the issue is fixed unless you have actually located and \
 addressed its root cause. If the issue is too ambiguous to act on \
 confidently, say so plainly instead of guessing.
@@ -66,7 +72,7 @@ class AgentLoop:
     def __init__(self, llm: LLMClient, tools: ToolRegistry, validate_fn: ValidateFn | None = None):
         self.llm = llm
         self.tools = tools
-        self.validate_fn = validate_fn or default_validate
+        self.validate_fn = validate_fn or Validator().validate
 
     def run(self, job: Job, workspace: Workspace) -> AgentResult:
         job.status = AgentStatus.INVESTIGATING
@@ -78,10 +84,27 @@ class AgentLoop:
             log.info("attempt.start")
 
             job.status = AgentStatus.IMPLEMENTING
-            final_text = self._act_until_done(messages, workspace, log)
+            try:
+                final_text = self._act_until_done(messages, workspace, log)
+            except BudgetExceededError as e:
+                reason = f"Stopped before reaching a validated fix: {e}"
+                log.warning("budget.exceeded")
+                job.escalation_reason = reason
+                job.finish(AgentStatus.ESCALATED)
+                return AgentResult(job=job, success=False, summary=reason)
 
             job.status = AgentStatus.VALIDATING
             outcome = self.validate_fn(workspace)
+            if outcome.passed and not self._has_changes(workspace):
+                outcome = ValidationOutcome(
+                    passed=False,
+                    checks={**outcome.checks, "changes": False},
+                    detail=(
+                        "No files were changed, so nothing was fixed. Validation passing "
+                        "on an unmodified repository proves nothing. Make the fix, or if "
+                        "the issue can't be resolved, explain why."
+                    ),
+                )
             job.attempts.append(Attempt(number=attempt_number, validation=outcome, summary=final_text))
             log.info("attempt.validated", passed=outcome.passed, checks=outcome.checks)
 
@@ -141,6 +164,11 @@ class AgentLoop:
         return last_text or "(tool-call limit reached without a summary)"
 
     @staticmethod
+    def _has_changes(workspace: Workspace) -> bool:
+        result = workspace.run(["git", "status", "--porcelain"])
+        return not result.ok or bool(result.stdout.strip())
+
+    @staticmethod
     def _initial_prompt(job: Job) -> str:
         return (
             f"{job.issue_context()}\n\n"
@@ -159,8 +187,12 @@ class AgentLoop:
     @staticmethod
     def _escalation_message(job: Job, outcome: ValidationOutcome) -> str:
         failed = [name for name, ok in outcome.checks.items() if not ok]
-        return (
+        message = (
             f"Could not produce a passing fix for issue #{job.issue_number} within "
             f"{job.max_attempts} attempts. Last failing checks: {', '.join(failed)}.\n\n"
             f"{outcome.detail}"
         )
+        last_note = job.attempts[-1].summary.strip() if job.attempts else ""
+        if last_note:
+            message += f"\n\nThe agent's last message:\n{last_note}"
+        return message

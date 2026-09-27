@@ -33,6 +33,13 @@ def test_read_missing_file_raises(ws):
         ws.read_file("nope.py")
 
 
+def test_run_applies_env_overrides(tmp_path):
+    ws = LocalWorkspace(tmp_path, env={"AGENT_TEST_VAR": "from-workspace"})
+    result = ws.run(["python3", "-c", "import os; print(os.environ['AGENT_TEST_VAR'])"])
+    assert result.ok
+    assert "from-workspace" in result.stdout
+
+
 def test_run_executes_in_root(ws):
     result = ws.run(["python3", "-c", "print('ran')"])
     assert result.ok

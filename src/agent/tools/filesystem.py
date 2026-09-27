@@ -11,8 +11,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agent.tools.base import Tool, ToolResult
+from src.agent.tools.base import Tool, ToolResult, truncate
 from src.agent.workspace import Workspace
+
+MAX_LIST_ENTRIES = 300
+MAX_READ_CHARS = 12000
 
 
 def _list_files(ws: Workspace, args: dict[str, Any]) -> ToolResult:
@@ -20,7 +23,11 @@ def _list_files(ws: Workspace, args: dict[str, Any]) -> ToolResult:
     files = ws.list_files(path)
     if not files:
         return ToolResult.success(f"(no files found under '{path}')")
-    return ToolResult.success("\n".join(files))
+    shown = files[:MAX_LIST_ENTRIES]
+    output = "\n".join(shown)
+    if len(files) > len(shown):
+        output += f"\n[... {len(files) - len(shown)} more files; list a subdirectory to narrow down]"
+    return ToolResult.success(output)
 
 
 def _read_file(ws: Workspace, args: dict[str, Any]) -> ToolResult:
@@ -29,8 +36,17 @@ def _read_file(ws: Workspace, args: dict[str, Any]) -> ToolResult:
         content = ws.read_file(path)
     except FileNotFoundError:
         return ToolResult.failure(f"file not found: {path}")
-    numbered = "\n".join(f"{i + 1}\t{line}" for i, line in enumerate(content.splitlines()))
-    return ToolResult.success(numbered or "(empty file)")
+    lines = content.splitlines()
+    total = len(lines)
+    if total == 0:
+        return ToolResult.success("(empty file)")
+    start = max(int(args.get("start_line", 1)), 1)
+    end = min(int(args.get("end_line", total)), total)
+    if start > end:
+        return ToolResult.failure(f"start_line {start} is past end_line {end} (file has {total} lines)")
+    body = "\n".join(f"{n}\t{lines[n - 1]}" for n in range(start, end + 1))
+    body = truncate(body, MAX_READ_CHARS)
+    return ToolResult.success(f"[{path}: lines {start}-{end} of {total}]\n{body}")
 
 
 def _create_file(ws: Workspace, args: dict[str, Any]) -> ToolResult:
@@ -83,10 +99,18 @@ LIST_FILES = Tool(
 
 READ_FILE = Tool(
     name="read_file",
-    description="Read a file's contents, with line numbers, relative to the repo root.",
+    description=(
+        "Read a file with line numbers, relative to the repo root. Optionally pass "
+        "start_line/end_line to read only a range; large reads are truncated, so prefer "
+        "ranges once you know where the relevant code is."
+    ),
     input_schema={
         "type": "object",
-        "properties": {"path": {"type": "string"}},
+        "properties": {
+            "path": {"type": "string"},
+            "start_line": {"type": "integer", "description": "First line to read (1-based)"},
+            "end_line": {"type": "integer", "description": "Last line to read (inclusive)"},
+        },
         "required": ["path"],
     },
     handler=_read_file,

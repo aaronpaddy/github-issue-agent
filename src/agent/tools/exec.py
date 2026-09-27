@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agent.tools.base import Tool, ToolResult
+from src.agent.tools.base import Tool, ToolResult, truncate
 from src.agent.workspace import Workspace
 
 # (binary, allowed first args...) — empty tuple means any args after the binary are fine,
@@ -26,6 +26,7 @@ ALLOWED_COMMANDS: dict[str, set[str] | None] = {
 }
 
 _FORBIDDEN_CHARS = set(";|&$`\n<>")
+MAX_COMMAND_OUTPUT_CHARS = 6000
 
 
 def _validate_argv(argv: list[str]) -> str | None:
@@ -55,7 +56,7 @@ def _run_tests(ws: Workspace, args: dict[str, Any]) -> ToolResult:
     if target:
         argv.append(target)
     result = ws.run(argv, timeout=180)
-    output = (result.stdout + "\n" + result.stderr).strip()
+    output = truncate((result.stdout + "\n" + result.stderr).strip(), MAX_COMMAND_OUTPUT_CHARS, keep_tail=True)
     if result.ok:
         return ToolResult.success(f"PASSED\n{output}")
     return ToolResult.success(f"FAILED (exit {result.returncode})\n{output}")
@@ -71,7 +72,7 @@ def _run_command(ws: Workspace, args: dict[str, Any]) -> ToolResult:
         return ToolResult.failure(error)
 
     result = ws.run(argv, timeout=120)
-    output = (result.stdout + "\n" + result.stderr).strip()
+    output = truncate((result.stdout + "\n" + result.stderr).strip(), MAX_COMMAND_OUTPUT_CHARS, keep_tail=True)
     status = "OK" if result.ok else f"FAILED (exit {result.returncode})"
     return ToolResult.success(f"{status}\n{output}")
 

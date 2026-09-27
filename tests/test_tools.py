@@ -66,3 +66,27 @@ def test_run_command_allows_allowlisted_git_subcommand(registry, ws):
 def test_run_command_rejects_disallowed_git_subcommand(registry, ws):
     result = registry.execute(ws, "run_command", {"argv": ["git", "push"]})
     assert not result.ok
+
+
+def test_read_file_supports_line_ranges(registry, ws):
+    ws.write_file("long.py", "\n".join(f"line{i}" for i in range(1, 11)))
+    result = registry.execute(ws, "read_file", {"path": "long.py", "start_line": 3, "end_line": 4})
+    assert result.ok
+    assert "lines 3-4 of 10" in result.output
+    assert "line3" in result.output
+    assert "line5" not in result.output
+
+
+def test_read_file_truncates_huge_output(registry, ws):
+    ws.write_file("big.py", "x = 1\n" * 20000)
+    result = registry.execute(ws, "read_file", {"path": "big.py"})
+    assert result.ok
+    assert len(result.output) < 13000
+    assert "characters omitted" in result.output
+
+
+def test_list_files_is_capped(registry, ws):
+    for i in range(320):
+        ws.write_file(f"pkg/m{i}.py", "")
+    result = registry.execute(ws, "list_files", {"path": "pkg"})
+    assert "more files" in result.output

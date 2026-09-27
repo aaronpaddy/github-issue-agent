@@ -13,6 +13,16 @@ from typing import Any
 from src.agent.workspace import Workspace
 
 
+def truncate(text: str, limit: int, keep_tail: bool = False) -> str:
+    """Cap tool output so it doesn't bloat the conversation (and the bill)."""
+    if len(text) <= limit:
+        return text
+    dropped = len(text) - limit
+    if keep_tail:
+        return f"[... {dropped} earlier characters omitted ...]\n{text[-limit:]}"
+    return f"{text[:limit]}\n[... {dropped} more characters omitted ...]"
+
+
 @dataclass
 class ToolResult:
     ok: bool

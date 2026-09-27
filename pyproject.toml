@@ -35,8 +35,12 @@ issue-agent = "src.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 100
+extend-exclude = ["workspaces"]
 
 [tool.mypy]
 python_version = "3.11"

@@ -1,4 +1,5 @@
 from src.agent.core import AgentLoop
+from src.agent.cost import BudgetExceededError
 from src.agent.llm import LLMResponse, ToolCall
 from src.agent.state import AgentStatus, Job, ValidationOutcome
 from src.agent.tools import default_registry
@@ -83,6 +84,30 @@ def test_agent_loop_retries_then_escalates(tmp_path):
     assert "still failing" in job.escalation_reason
 
 
+def test_agent_loop_rejects_a_pass_with_no_changes(tmp_path):
+    import subprocess
+
+    (tmp_path / "a.py").write_text("def foo():\n    return 1\n")
+    for cmd in (
+        ["git", "init", "-q"],
+        ["git", "add", "-A"],
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"],
+    ):
+        subprocess.run(cmd, cwd=tmp_path, check=True)
+
+    llm = FakeLLM([summary_response("nothing to change")])
+    validate_fn = lambda ws: ValidationOutcome(passed=True, checks={"pytest": True}, detail="")
+
+    loop = AgentLoop(llm=llm, tools=default_registry(), validate_fn=validate_fn)
+    job = make_job()
+    job.max_attempts = 1
+    result = loop.run(job, LocalWorkspace(tmp_path))
+
+    assert not result.success
+    assert job.status == AgentStatus.ESCALATED
+    assert "No files were changed" in (job.escalation_reason or "")
+
+
 def test_agent_loop_never_exceeds_max_attempts(tmp_path):
     # Even if validation always fails, the loop must stop at exactly max_attempts.
     responses = []
@@ -97,3 +122,31 @@ def test_agent_loop_never_exceeds_max_attempts(tmp_path):
     loop.run(job, make_workspace(tmp_path))
 
     assert len(job.attempts) == 1
+
+
+def test_agent_loop_escalates_when_the_budget_runs_out(tmp_path):
+    class BrokeLLM:
+        def call(self, system, messages, tools):
+            raise BudgetExceededError("Run budget of $1.00 reached")
+
+    validate_fn = lambda ws: ValidationOutcome(passed=True, checks={"pytest": True}, detail="")
+    loop = AgentLoop(llm=BrokeLLM(), tools=default_registry(), validate_fn=validate_fn)
+    job = make_job()
+    result = loop.run(job, make_workspace(tmp_path))
+
+    assert not result.success
+    assert job.status == AgentStatus.ESCALATED
+    assert "budget" in (job.escalation_reason or "").lower()
+    assert job.attempts == []
+
+
+def test_escalation_includes_the_agents_own_explanation(tmp_path):
+    llm = FakeLLM([summary_response("The issue is too vague to act on safely.")])
+    validate_fn = lambda ws: ValidationOutcome(passed=False, checks={"pytest": False}, detail="x")
+
+    loop = AgentLoop(llm=llm, tools=default_registry(), validate_fn=validate_fn)
+    job = make_job()
+    job.max_attempts = 1
+    loop.run(job, make_workspace(tmp_path))
+
+    assert "too vague to act on safely" in (job.escalation_reason or "")
