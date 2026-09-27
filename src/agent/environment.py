@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src.agent.sandbox import DockerWorkspace
 from src.agent.workspace import LocalWorkspace
 
 INSTALL_TIMEOUT_SECONDS = 900
@@ -56,3 +57,21 @@ def create_python_env(workspace: LocalWorkspace, venv_dir: Path, extras: str = "
         "VIRTUAL_ENV": str(venv_dir),
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
     }
+
+
+def create_sandboxed_python_env(workspace: DockerWorkspace, extras: str = "dev") -> None:
+    """Build the project's virtualenv inside the container.
+
+    Installing runs the project's build backend, which is the first point where its code
+    executes, so it happens in the sandbox too. It is the only step given network access.
+    """
+    steps: list[tuple[list[str], bool]] = [
+        (["python", "-m", "venv", "/venv"], False),
+        (["pip", "install", "--quiet", "-e", f".[{extras}]" if extras else "."], True),
+        (["pip", "install", "--quiet", *VALIDATION_TOOLS], True),
+    ]
+    for argv, needs_network in steps:
+        result = workspace.run(argv, timeout=INSTALL_TIMEOUT_SECONDS, network=needs_network)
+        if not result.ok:
+            tail = (result.stdout + result.stderr).strip()[-2000:]
+            raise EnvironmentSetupError(f"`{' '.join(argv)}` failed in the sandbox:\n{tail}")

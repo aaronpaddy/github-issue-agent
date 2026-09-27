@@ -19,9 +19,10 @@ import structlog
 
 from src.agent.core import AgentLoop
 from src.agent.cost import CostTracker
-from src.agent.environment import create_python_env
+from src.agent.environment import create_python_env, create_sandboxed_python_env
 from src.agent.llm import LLMClient
 from src.agent.policy import Action, decide
+from src.agent.sandbox import DockerWorkspace, SandboxConfig, SandboxError, docker_problem
 from src.agent.state import AgentStatus, Clarification, Job
 from src.agent.tools import default_registry
 from src.agent.triage import triage_issue
@@ -169,6 +170,11 @@ def _run(
         max_attempts=settings.max_attempts,
     )
 
+    if settings.sandbox == "docker":
+        problem = docker_problem()
+        if problem:  # fail closed: never quietly run untrusted code on the host instead
+            raise SandboxError(f"{problem} Refusing to run repository code outside a sandbox.")
+
     cost = CostTracker(model=settings.claude_model, budget_usd=settings.max_budget_usd)
     llm = LLMClient(model=settings.claude_model, api_key=settings.anthropic_api_key or None, cost=cost)
 
@@ -191,10 +197,17 @@ def _run(
 
     logger.info("cloning", repo=repo, dest=str(repo_dir))
     clone_repo(repo, repo_dir, auth.token)
-    workspace = LocalWorkspace(repo_dir)
-
-    logger.info("installing project environment (this can take a minute)")
-    create_python_env(workspace, job_dir / "venv")
+    workspace: LocalWorkspace
+    if settings.sandbox == "docker":
+        workspace = DockerWorkspace(
+            repo_dir, job_dir / "venv", SandboxConfig(image=settings.sandbox_image)
+        )
+        logger.info("installing project environment in the sandbox (this can take a minute)")
+        create_sandboxed_python_env(workspace)
+    else:
+        workspace = LocalWorkspace(repo_dir)
+        logger.info("installing project environment on the host (SANDBOX=none)")
+        create_python_env(workspace, job_dir / "venv")
 
     validator = Validator()
     logger.info("capturing baseline validation")

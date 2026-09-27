@@ -41,9 +41,9 @@ def _auth_env(token: str) -> dict[str, str]:
 
 def _git(argv: list[str], cwd: Path | None, token: str | None = None) -> str:
     env = _auth_env(token) if token else None
-    proc = subprocess.run(
-        ["git", *argv], cwd=cwd, capture_output=True, text=True, check=False, env=env
-    )
+    # A repo's own config and hooks are a way to make git run programs; never honour them here.
+    hardened = ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", *argv]
+    proc = subprocess.run(hardened, cwd=cwd, capture_output=True, text=True, check=False, env=env)
     if proc.returncode != 0:
         raise GitOpsError(f"`git {' '.join(argv)}` failed: {proc.stderr.strip()}")
     return proc.stdout

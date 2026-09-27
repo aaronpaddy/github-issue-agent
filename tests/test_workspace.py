@@ -44,3 +44,17 @@ def test_run_executes_in_root(ws):
     result = ws.run(["python3", "-c", "print('ran')"])
     assert result.ok
     assert "ran" in result.stdout
+
+
+def test_writes_inside_dot_git_are_rejected(ws, tmp_path):
+    (tmp_path / ".git").mkdir()
+    for target in (".git/config", ".git/hooks/pre-commit", "sub/.git/config"):
+        with pytest.raises(PathEscapeError, match=".git"):
+            ws.write_file(target, "[core]\nfsmonitor = evil")
+    assert not (tmp_path / ".git" / "config").exists()
+
+
+def test_files_that_merely_contain_git_in_the_name_are_still_writable(ws):
+    ws.write_file(".gitignore", "x\n")
+    ws.write_file("docs/.github/workflows/ci.yml", "y\n")
+    assert ws.read_file(".gitignore") == "x\n"

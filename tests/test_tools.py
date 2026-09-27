@@ -90,3 +90,15 @@ def test_list_files_is_capped(registry, ws):
         ws.write_file(f"pkg/m{i}.py", "")
     result = registry.execute(ws, "list_files", {"path": "pkg"})
     assert "more files" in result.output
+
+
+def test_the_model_cannot_edit_or_create_files_inside_dot_git(registry, ws, tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("[core]\n")
+    edit = registry.execute(
+        ws, "edit_file", {"path": ".git/config", "old_string": "[core]", "new_string": "[core]\nfsmonitor=x"}
+    )
+    create = registry.execute(ws, "create_file", {"path": ".git/hooks/pre-commit", "content": "evil"})
+    assert not edit.ok
+    assert not create.ok
+    assert (tmp_path / ".git" / "config").read_text() == "[core]\n"

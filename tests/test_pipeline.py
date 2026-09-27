@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from src import pipeline
+from src.agent.sandbox import SandboxError
 from src.agent.state import Clarification, IssueComment
 from src.config import Settings
 from src.github.client import ExistingPR, IssueContext
@@ -41,7 +42,12 @@ def make_issue(**overrides) -> IssueContext:
 @pytest.fixture
 def settings():
     return Settings(
-        _env_file=None, github_token="t", github_repo="o/r", anthropic_api_key="k", workspaces_dir="ws"
+        _env_file=None,
+        github_token="t",
+        github_repo="o/r",
+        anthropic_api_key="k",
+        workspaces_dir="ws",
+        sandbox="none",
     )
 
 
@@ -289,3 +295,22 @@ def test_a_dry_run_reacts_to_nothing(monkeypatch, settings):
     run(settings, dry_run=True, trigger="reply")
     assert github.acknowledged == []
     assert github.acknowledged_comments == []
+
+
+def test_it_refuses_to_run_repository_code_when_the_sandbox_is_unavailable(monkeypatch):
+    docker_settings = Settings(
+        _env_file=None, github_token="t", github_repo="o/r", anthropic_api_key="k", sandbox="docker"
+    )
+    github = FakeGitHub(make_issue())
+    wire(monkeypatch, github, triage=lambda llm, job: pytest.fail("must fail before any model call"))
+    monkeypatch.setattr(pipeline, "docker_problem", lambda: "Docker is not running.")
+
+    with pytest.raises(SandboxError, match="Refusing to run repository code outside a sandbox"):
+        run(docker_settings)
+
+
+def test_the_sandbox_check_is_skipped_when_it_is_turned_off(monkeypatch, settings):
+    github = FakeGitHub(make_issue())
+    wire(monkeypatch, github, triage=lambda llm, job: Clarification("Which?", "unclear"))
+    monkeypatch.setattr(pipeline, "docker_problem", lambda: pytest.fail("must not be consulted"))
+    assert run(settings)[0].outcome == Outcome.NEEDS_CLARIFICATION

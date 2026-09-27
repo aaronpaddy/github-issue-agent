@@ -55,7 +55,7 @@ Fetch issue + comments ──► Copy repo into a fresh working directory
 
 ## Getting started
 
-Requires Python 3.11+.
+Requires Python 3.11+, and Docker for the default sandbox (`docker pull python:3.12-slim`).
 
 ```bash
 python3 -m venv .venv
@@ -78,6 +78,8 @@ Fill in `.env`:
 | `MAX_BUDGET_USD` | Hard spend cap per run in USD (default `1.00`) |
 | `MAX_CLARIFICATION_ROUNDS` | How many times the agent may ask for clarification on one issue before giving up (default `3`) |
 | `WORKSPACES_DIR` | Where per-run clones and virtualenvs are created (default `workspaces`) |
+| `SANDBOX` | `docker` (default) runs repository code in a container; `none` runs it on the host |
+| `SANDBOX_IMAGE` | Image for the container (default `python:3.12-slim`) |
 | `KEEP_WORKSPACES` | Keep each run's clone and virtualenv instead of deleting them (default `false`) |
 | `WEBHOOK_SECRET` | Service only. Shared secret GitHub signs webhooks with |
 | `TRIGGER_LABEL` | Service only. Label that queues a run (default `agent`) |
@@ -130,6 +132,19 @@ Passing checks proves a change is *safe*, not that it is *right*. So the agent m
 5. **Awareness of other work.** It skips issues that are closed, are pull requests, or already have an open agent PR, uses a unique branch name if an old one exists, and warns in the PR when another open PR touches the same files.
 
 Every PR carries a "Reviewer notes" section with the confidence, the interpretation, the assumptions, and any reasons it is a draft.
+
+### Sandboxed execution
+
+Installing a project's dependencies and running its tests executes code the agent has no reason to trust: a build script, a `conftest.py`, a test. So every command that runs repository code goes through a throwaway Docker container (`SANDBOX=docker`, the default):
+
+- It sees only the clone and its virtualenv. Nothing else of the host is mounted.
+- It receives none of the host's environment, so no API keys or tokens.
+- `.git` is mounted read-only, so code can't plant a git config or hook that the host's own `git` would later execute. (The agent's file tools are likewise refused writes inside `.git`, and host-side `git` ignores a repo's fsmonitor and hooks.)
+- There is no network, except while installing dependencies.
+- It runs as an unprivileged user with all capabilities dropped, a read-only root filesystem, and limits on memory, CPU and process count.
+- It is deleted when the command ends, and killed if it overruns its timeout.
+
+It fails closed: if Docker is unavailable the run stops instead of quietly running the repository's code on your machine. Set `SANDBOX=none` to run on the host, only for repositories you trust. The tests include a set that runs real containers and tries to break out of them (read a host file, see an API key, write to `.git`, reach the network, write outside the workspace).
 
 ### Cost controls
 
@@ -196,7 +211,8 @@ src/
     state.py        # Job, AgentStatus, Attempt, ValidationOutcome
     cost.py         # Token/dollar accounting and the per-run budget
     validator.py    # Baseline-relative pytest/ruff/black/mypy gate
-    environment.py  # Builds the target project's virtualenv
+    environment.py  # Builds the target project's virtualenv (in the sandbox by default)
+    sandbox.py      # DockerWorkspace: runs repository code in a locked-down container
     workspace.py    # Workspace interface and the path-jailed local implementation
     tools/          # The nine tools and the tool registry
   github/
@@ -220,6 +236,6 @@ tests/
 
 Early-stage. It can run from the command line or as a webhook-driven service.
 
-- Execution is not sandboxed. Tests and linters run directly on the host, so only run it against repositories you trust, and supervise it. A containerized workspace is the intended next step.
+- The sandbox protects the host, not the target repository's own secrets: a project whose tests genuinely need network access or credentials will fail its checks inside it (baseline and final results are compared, so this only blocks a fix that depends on them).
 - Validation commands are configured in code rather than discovered per repository.
 - Only Python projects installable with `pip install -e ".[dev]"` are supported.

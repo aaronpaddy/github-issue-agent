@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +20,8 @@ class Settings(BaseSettings):
     max_budget_usd: float = 1.00
     max_clarification_rounds: int = 3
     workspaces_dir: str = "workspaces"
+    sandbox: Literal["docker", "none"] = "docker"  # where repository code (installs, tests) runs
+    sandbox_image: str = "python:3.12-slim"
     keep_workspaces: bool = False  # keep each run's clone and venv (debugging)
 
     # Webhook service

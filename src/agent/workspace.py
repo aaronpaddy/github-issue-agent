@@ -96,6 +96,10 @@ class LocalWorkspace(Workspace):
 
     def write_file(self, relative_path: str, content: str) -> None:
         path = self.resolve(relative_path)
+        # Git runs on the host, and its config and hooks can execute programs. The model must
+        # never be able to plant one.
+        if ".git" in path.relative_to(self.root).parts:
+            raise PathEscapeError(f"writes inside .git are not allowed: '{relative_path}'")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
