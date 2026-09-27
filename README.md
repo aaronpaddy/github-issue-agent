@@ -4,6 +4,38 @@ An autonomous agent that takes a GitHub issue, investigates the repository, impl
 
 Unlike a single prompt-to-patch call, the agent works in a loop: it reads code, edits files, runs the repository's real test/lint/type checks, and uses failures to revise its approach. It only opens a PR once the change passes objective validation. If it can't get there within a fixed number of attempts, it comments on the issue explaining what it tried instead of opening a broken PR.
 
+## Demo
+
+The agent has been working on a small public library, [`aaronpaddy/expense-splitter`](https://github.com/aaronpaddy/expense-splitter). A person applies the `agent` label to an issue, and the rest is the agent. What follows is real, not staged.
+
+**It asks instead of guessing.** Issue #5 says only "Support other currencies". The agent turned it away before touching any code, asking what "support" should mean. The maintainer answered in plain English (the 👀 is the agent marking that it saw the reply), the agent resumed on its own, and PR #14 closed the issue.
+
+![An issue where the agent asks a clarifying question, gets an answer, and a PR closes it](assets/screenshots/issue-clarification-thread.png)
+
+**The pull request explains itself.** It's authored by the bot, states how it interpreted the issue and what it assumed, and reports validation against the base branch. It is never merged by the agent.
+
+![PR #14: bot-authored, with the agent's interpretation, assumptions and validation](assets/screenshots/pr-currency-formatting.png)
+
+**When it isn't sure, it says so.** A draft PR that only references the issue, with the reasons listed. (This one predates a refinement to the policy: it was made a draft because its first attempt failed a lint check, which no longer counts as doubt. The maintainer marked it ready and merged it.)
+
+![PR #13: opened as a draft, with the reason stated](assets/screenshots/pr-draft-settle-validation.png)
+
+**A human always merges.** Every PR here is authored by `issue-pr-agent[bot]`, with checks passing. One (#8) was closed unmerged, because it conflicted with another PR that landed first.
+
+![All pull requests authored by the bot, with checks passing](assets/screenshots/pull-requests-list.png)
+
+**Untrusted code stays in the box.** A deliberately malicious test, run through the sandbox against the real repository, tried to do the following. Every attempt was blocked and the host's `.git/config` was untouched:
+
+| The test tried to | Result |
+|---|---|
+| read a secret file on the host | blocked (file not found) |
+| read the API key from the environment | blocked (not present) |
+| plant an `fsmonitor` in `.git/config` | blocked (read-only) |
+| call home over the network | blocked |
+| write to `/etc` | blocked (read-only filesystem) |
+| list the host's home directory | blocked (not visible) |
+| run as root | no, an unprivileged user |
+
 ## How it works
 
 ```
@@ -188,12 +220,38 @@ python -m src.service.worker        # worker; run several for parallel issues
 
 Set the GitHub App's webhook URL to `<public url>/webhooks/github`, its webhook secret to `WEBHOOK_SECRET`, and subscribe it to **Issues** and **Issue comment** events. To reach a local machine, a relay such as [smee.io](https://smee.io) works: `npx smee-client --url https://smee.io/<channel> --target http://127.0.0.1:8000/webhooks/github`.
 
+## Evaluation
+
+How often is it right? [`evals/`](evals/README.md) runs the real pipeline (triage, sandbox, agent loop, policy) on 12 fixed cases against a pinned commit, with a fake GitHub so nothing is posted, and judges the results independently of the agent: hidden tests it never saw, and deliberate bugs planted to check that the tests it *writes* actually catch something.
+
+Latest run (12 cases, 2 runs each, [full report](evals/RESULTS.md)):
+
+| Measure | Result |
+|---|---|
+| Cases passed | **24 / 24** |
+| Fixes that were correct and well tested | 18 / 18 |
+| Vague or already-solved issues handled correctly | 6 / 6 |
+| Solvable issues it wrongly held back on | 0 |
+| Followed instructions hidden in an issue | never (1 case, 2 runs) |
+| Average cost per run | $0.036 (total $0.87) |
+
+**What that does and doesn't show.** The cases are small, written by the author, against one small library, so a perfect score means the pipeline works on tasks like these, not that it would on a large or unfamiliar codebase. The suite is a regression check that the pieces work together, and it is what caught real defects while it was being built (see below), not a benchmark. Wrongly declining a solvable issue counts as a failure, so it can't score well by refusing everything.
+
+Building it found problems that unit tests hadn't:
+
+- **A sandbox race.** Docker Desktop's file sharing sometimes showed a container a stale copy of a file the host had just written (about 1 run in 4 with no delay), which could make the agent's own `run_tests` execute old code. Fixed by waiting for the file share to settle after a host write, with a test that runs real containers.
+- **An unfair test.** Validation showed one case's hidden tests failing against its own reference solution, which traced to that race, so the eval could not be trusted until it was fixed.
+- **An over-eager policy.** Live runs showed a retry after a lint failure downgrading a good PR to a draft; only an earlier failing *test* counts as doubt now.
+
 ## Development
 
 ```bash
 pytest -q
 ruff check src tests
 mypy src
+
+python -m src.evals validate    # check the eval cases are fair (free)
+python -m src.evals run          # run them for real (costs a few cents per case)
 ```
 
 The test suite uses a scripted fake LLM, so it makes no API calls and covers the workspace path jail, the tool allowlist, the state machine, and the loop's retry and escalation behavior.
@@ -226,10 +284,13 @@ src/
     queue.py        # Redis/RQ queue and the per-issue lock
     jobs.py         # What the worker runs
     worker.py       # Worker entry point
+  evals/            # Eval harness: case loading, scoring, mutation testing, runner
   pipeline.py       # One end-to-end run on one issue (shared by the CLI and the worker)
   cli.py            # Command-line entry point
   config.py         # Environment-driven settings
 tests/
+evals/              # Eval cases (issue, hidden tests, reference fix) and results
+assets/screenshots/ # Screenshots used in this README
 ```
 
 ## Status and limitations

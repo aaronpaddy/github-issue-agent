@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,11 @@ from src.agent.workspace import CommandResult, LocalWorkspace
 
 CONTAINER_REPO = "/workspace"
 CONTAINER_VENV = "/venv"
+
+# Docker Desktop's file sharing can show a container a stale copy of a file the host wrote in the
+# last few tenths of a second (measured: about 1 in 4 runs with no wait, none after 0.5s). Waiting
+# a second after any host-side write means the container always runs against what was written.
+FILE_SYNC_SETTLE_SECONDS = 1.0
 
 
 class SandboxError(Exception):
@@ -135,11 +141,26 @@ class DockerWorkspace(LocalWorkspace):
         self.venv_dir = Path(venv_dir).resolve()
         self.venv_dir.mkdir(parents=True, exist_ok=True)
         self.config = config or SandboxConfig()
+        self._last_change = float("-inf")
+
+    def mark_changed(self) -> None:
+        """Record that files were just changed on the host, outside write_file."""
+        self._last_change = time.monotonic()
+
+    def write_file(self, relative_path: str, content: str) -> None:
+        super().write_file(relative_path, content)
+        self.mark_changed()
+
+    def _wait_for_file_sync(self) -> None:
+        remaining = FILE_SYNC_SETTLE_SECONDS - (time.monotonic() - self._last_change)
+        if remaining > 0:
+            time.sleep(remaining)
 
     def run(self, argv: list[str], timeout: int = 120, network: bool = False) -> CommandResult:
         if argv and argv[0] == "git":
             return self._run_git_on_host(argv, timeout)
 
+        self._wait_for_file_sync()
         name = f"issue-agent-{uuid.uuid4().hex[:12]}"
         command = build_docker_command(
             name=name,

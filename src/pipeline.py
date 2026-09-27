@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -74,6 +75,13 @@ class RunResult:
     pr_url: str | None = None
     spent_usd: float = 0.0
     workspace: Path | None = None
+    # What the agent reported and what the policy decided, for callers that want to inspect it.
+    confidence: str | None = None
+    policy_action: str | None = None
+    changed_files: tuple[str, ...] = ()
+    changed_lines: int = 0
+    attempts: int = 0
+    llm_calls: int = 0
 
 
 def ask_or_give_up(
@@ -106,13 +114,21 @@ def run_issue(
     emit: Emit = print,
     trigger: str = "label",
     force: bool = False,
+    github: GitHubClient | None = None,
+    cloner: Callable[[str, Path], None] | None = None,
 ) -> RunResult:
     """Run the agent on one issue. A real run deletes its clone and virtualenv when it ends
     (a long-lived worker would otherwise fill the disk); a dry run keeps them so the result
-    can be inspected, as does KEEP_WORKSPACES."""
+    can be inspected, as does KEEP_WORKSPACES.
+
+    `github` and `cloner` replace the real GitHub client and clone step (used by the evals, which
+    run against a fake issue and a pinned commit). An injected client is only allowed on a dry
+    run, so it can never end up pushing anything."""
+    if github is not None and not dry_run:
+        raise ValueError("an injected GitHub client is only supported for dry runs")
     job_dirs: list[Path] = []
     try:
-        return _run(settings, issue_number, dry_run, emit, job_dirs, trigger, force)
+        return _run(settings, issue_number, dry_run, emit, job_dirs, trigger, force, github, cloner)
     finally:
         if not dry_run and not settings.keep_workspaces:
             for job_dir in job_dirs:
@@ -127,11 +143,17 @@ def _run(
     job_dirs: list[Path],
     trigger: str,
     force: bool,
+    injected_github: GitHubClient | None,
+    cloner: Callable[[str, Path], None] | None,
 ) -> RunResult:
     repo = settings.github_repo
-    auth = resolve_auth(settings, repo)
-    logger.info("authenticated", identity=auth.identity)
-    github = GitHubClient(token=auth.token, repo_full_name=repo)
+    auth = None
+    if injected_github is None:
+        auth = resolve_auth(settings, repo)
+        logger.info("authenticated", identity=auth.identity)
+        github = GitHubClient(token=auth.token, repo_full_name=repo)
+    else:
+        github = injected_github
 
     logger.info("fetching issue", repo=repo, issue=issue_number)
     issue = github.get_issue(issue_number)
@@ -196,7 +218,11 @@ def _run(
     job_dirs.append(job_dir)
 
     logger.info("cloning", repo=repo, dest=str(repo_dir))
-    clone_repo(repo, repo_dir, auth.token)
+    if cloner is not None:
+        cloner(repo, repo_dir)
+    else:
+        assert auth is not None
+        clone_repo(repo, repo_dir, auth.token)
     workspace: LocalWorkspace
     if settings.sandbox == "docker":
         workspace = DockerWorkspace(
@@ -220,8 +246,19 @@ def _run(
     result = loop.run(job, workspace)
     emit(f"API usage: {cost.summary()}")
 
-    def done(outcome: Outcome, detail: str = "", pr_url: str | None = None) -> RunResult:
-        return RunResult(outcome, detail, pr_url, spent_usd=cost.spent_usd, workspace=repo_dir)
+    def done(
+        outcome: Outcome, detail: str = "", pr_url: str | None = None, **extra: Any
+    ) -> RunResult:
+        return RunResult(
+            outcome,
+            detail,
+            pr_url,
+            spent_usd=cost.spent_usd,
+            workspace=repo_dir,
+            attempts=len(job.attempts),
+            llm_calls=cost.calls,
+            **extra,
+        )
 
     if job.status == AgentStatus.NEEDS_CLARIFICATION and job.clarification:
         logger.info("asking for clarification", job_id=job.id, rounds=rounds)
@@ -261,6 +298,12 @@ def _run(
     ]
     decision = decide(job.assessment, earlier_failures, stats)
     assessment = job.assessment
+    details: dict[str, Any] = {
+        "confidence": assessment.confidence if assessment else None,
+        "policy_action": decision.action.value,
+        "changed_files": stats.files,
+        "changed_lines": stats.changed_lines,
+    }
     emit(f"VALIDATED FIX:\n{result.summary}\n")
     if assessment:
         emit(f"Self-assessment: {assessment.confidence} confidence. {assessment.interpretation}")
@@ -280,7 +323,7 @@ def _run(
                 job.issue_number, declined_comment(assessment, decision), DECLINED
             )
         emit("(no pull request opened)")
-        return done(Outcome.DECLINED, "; ".join(decision.reasons))
+        return done(Outcome.DECLINED, "; ".join(decision.reasons), **details)
 
     overlaps = github.overlapping_prs(stats.files)
     for overlap in overlaps:
@@ -288,8 +331,9 @@ def _run(
 
     if dry_run:
         emit(f"(dry run: not pushing. Workspace kept at {repo_dir})")
-        return done(Outcome.VALIDATED)
+        return done(Outcome.VALIDATED, **details)
 
+    assert auth is not None  # an injected client is dry-run only, so real pushes always have auth
     branch_name = github.branch_name_for(job.issue_number, job.id)
     commit_message = f"Fix #{job.issue_number}: {job.issue_title}"
     create_commit_and_push(
@@ -321,4 +365,6 @@ def _run(
     job.pr_url = pr_url
     job.status = AgentStatus.DONE
     emit(f"{'Draft PR' if draft else 'PR'} opened: {pr_url}")
-    return done(Outcome.DRAFT_PR_OPENED if draft else Outcome.PR_OPENED, pr_url=pr_url)
+    return done(
+        Outcome.DRAFT_PR_OPENED if draft else Outcome.PR_OPENED, pr_url=pr_url, **details
+    )

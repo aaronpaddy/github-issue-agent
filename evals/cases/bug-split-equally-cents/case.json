@@ -1,0 +1,16 @@
+{
+  "id": "bug-split-equally-cents",
+  "description": "split_equally drops cents on uneven totals",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "fixed",
+  "trigger": "label",
+  "issue": {
+    "number": 1,
+    "title": "split_equally drops cents when the total doesn't divide evenly",
+    "body": "`split_equally` is documented to assign every cent (leftover cents go one each to the first people, so the shares add up to `total_cents`), but it just floor-divides and discards the remainder:\n\n```python\n>>> split_equally(100, [\"ann\", \"bob\", \"cy\"])\n{'ann': 33, 'bob': 33, 'cy': 33}   # sums to 99, one cent has vanished\n```\n\n`balances()` is built on it, so the loss shows up there too. The net balances for one shared expense should always sum to zero, but:\n\n```python\n>>> balances([Expense(\"ann\", 100, (\"ann\", \"bob\", \"cy\"))])\n{'ann': 67, 'bob': -33, 'cy': -33}   # sums to 1\n```\n\n**Expected**\n\n- `split_equally(100, [\"ann\", \"bob\", \"cy\"])` returns `{\"ann\": 34, \"bob\": 33, \"cy\": 33}`.\n- The shares always sum to `total_cents`, for any total and group size.\n- Net balances from `balances()` sum to zero.\n\nPlease add tests for the uneven cases.",
+    "comments": []
+  },
+  "hidden_test": "hidden_test.py",
+  "require_tests_added": true
+}

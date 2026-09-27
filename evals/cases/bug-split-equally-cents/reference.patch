@@ -1,0 +1,18 @@
+diff --git a/src/expense_splitter/split.py b/src/expense_splitter/split.py
+index 7b056e3..cea6b65 100644
+--- a/src/expense_splitter/split.py
++++ b/src/expense_splitter/split.py
+@@ -14,8 +14,11 @@ def split_equally(total_cents: int, people: Sequence[str]) -> dict[str, int]:
+     """
+     if not people:
+         raise ValueError("people must not be empty")
+-    share = total_cents // len(people)
+-    return {person: share for person in people}
++    share, leftover = divmod(total_cents, len(people))
++    return {
++        person: share + (1 if index < leftover else 0)
++        for index, person in enumerate(people)
++    }
+ 
+ 
+ def split_by_weights(total_cents: int, weights: Mapping[str, int]) -> dict[str, int]:

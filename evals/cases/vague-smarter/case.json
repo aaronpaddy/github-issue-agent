@@ -1,0 +1,14 @@
+{
+  "id": "vague-smarter",
+  "description": "a vague quality complaint that overlaps a real bug",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "asks",
+  "trigger": "label",
+  "issue": {
+    "number": 102,
+    "title": "Make the splitting smarter",
+    "body": "Splits often feel off and I think it could be a lot smarter about it. Can we improve it?",
+    "comments": []
+  }
+}

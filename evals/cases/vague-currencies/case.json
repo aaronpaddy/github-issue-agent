@@ -1,0 +1,14 @@
+{
+  "id": "vague-currencies",
+  "description": "a feature request with no defined goal",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "asks",
+  "trigger": "label",
+  "issue": {
+    "number": 5,
+    "title": "Support other currencies",
+    "body": "We're planning a trip abroad next month and it would be great if this worked with other currencies.",
+    "comments": []
+  }
+}

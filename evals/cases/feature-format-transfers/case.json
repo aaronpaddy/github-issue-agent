@@ -1,0 +1,16 @@
+{
+  "id": "feature-format-transfers",
+  "description": "add a format_transfers helper",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "fixed",
+  "trigger": "label",
+  "issue": {
+    "number": 4,
+    "title": "Add a helper that formats transfers as readable lines",
+    "body": "Right now everyone has to write their own loop to print the result of `settle_up` (see the example in the README). It would be nicer to have one helper for it.\n\n**Proposal**\n\nAdd `format_transfers(transfers)` that takes an iterable of `Transfer` and returns a list of strings, one per transfer, like:\n\n```\ncy pays ann $40.00\nbob pays ann $10.00\n```\n\n- An empty input returns an empty list.\n- Export it from the package so `from expense_splitter import format_transfers` works.\n- Update the README usage example to use it.\n- Add tests.",
+    "comments": []
+  },
+  "hidden_test": "hidden_test.py",
+  "require_tests_added": true
+}

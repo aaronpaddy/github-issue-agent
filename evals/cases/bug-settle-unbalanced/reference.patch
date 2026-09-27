@@ -1,0 +1,13 @@
+diff --git a/src/expense_splitter/settle.py b/src/expense_splitter/settle.py
+index b9cba57..d3e2da9 100644
+--- a/src/expense_splitter/settle.py
++++ b/src/expense_splitter/settle.py
+@@ -29,6 +29,8 @@ def settle_up(net_balances: Mapping[str, int]) -> list[Transfer]:
+     Greedy: the biggest debtor pays the biggest creditor until one of them is
+     square, then moves on. Ties are broken alphabetically so output is stable.
+     """
++    if sum(net_balances.values()) != 0:
++        raise ValueError("net balances must sum to zero")
+     creditors = sorted(
+         ((person, amount) for person, amount in net_balances.items() if amount > 0),
+         key=lambda pair: (-pair[1], pair[0]),

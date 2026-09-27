@@ -1,0 +1,16 @@
+{
+  "id": "feature-thousands-separator",
+  "description": "format_cents should group thousands",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "fixed",
+  "trigger": "label",
+  "issue": {
+    "number": 101,
+    "title": "format_cents doesn't group thousands",
+    "body": "Large amounts are hard to read because `format_cents` doesn't use thousands separators:\n\n    >>> format_cents(123456789)\n    '$1234567.89'\n\n**Expected**\n\n- `format_cents(123456789)` returns `'$1,234,567.89'`.\n- Negative amounts work the same way: `format_cents(-123456)` returns `'-$1,234.56'`.\n- Amounts under $1,000 look exactly as they do now.\n\nPlease add tests.",
+    "comments": []
+  },
+  "hidden_test": "hidden_test.py",
+  "require_tests_added": true
+}

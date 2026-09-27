@@ -116,7 +116,7 @@ def test_a_dry_run_touches_nothing_on_github(monkeypatch, settings):
 
 
 def test_workspaces_are_deleted_after_a_real_run_but_kept_for_dry_runs(monkeypatch, settings, tmp_path):
-    def fake_run(settings, issue_number, dry_run, emit, job_dirs, trigger, force):
+    def fake_run(settings, issue_number, dry_run, emit, job_dirs, trigger, force, github, cloner):
         job_dir = tmp_path / ("dry" if dry_run else "real")
         job_dir.mkdir()
         (job_dir / "repo").mkdir()
@@ -134,7 +134,7 @@ def test_workspaces_are_deleted_after_a_real_run_but_kept_for_dry_runs(monkeypat
 def test_keep_workspaces_overrides_cleanup(monkeypatch, tmp_path):
     kept = Settings(_env_file=None, github_token="t", github_repo="o/r", keep_workspaces=True)
 
-    def fake_run(settings, issue_number, dry_run, emit, job_dirs, trigger, force):
+    def fake_run(settings, issue_number, dry_run, emit, job_dirs, trigger, force, github, cloner):
         (tmp_path / "job").mkdir()
         job_dirs.append(tmp_path / "job")
         return pipeline.RunResult(Outcome.PR_OPENED)
@@ -145,7 +145,7 @@ def test_keep_workspaces_overrides_cleanup(monkeypatch, tmp_path):
 
 
 def test_workspaces_are_deleted_even_when_the_run_crashes(monkeypatch, settings, tmp_path):
-    def crashing_run(settings, issue_number, dry_run, emit, job_dirs, trigger, force):
+    def crashing_run(settings, issue_number, dry_run, emit, job_dirs, trigger, force, github, cloner):
         (tmp_path / "job").mkdir()
         job_dirs.append(tmp_path / "job")
         raise RuntimeError("boom")
@@ -314,3 +314,27 @@ def test_the_sandbox_check_is_skipped_when_it_is_turned_off(monkeypatch, setting
     wire(monkeypatch, github, triage=lambda llm, job: Clarification("Which?", "unclear"))
     monkeypatch.setattr(pipeline, "docker_problem", lambda: pytest.fail("must not be consulted"))
     assert run(settings)[0].outcome == Outcome.NEEDS_CLARIFICATION
+
+
+def test_an_injected_github_client_is_refused_on_a_real_run(settings):
+    with pytest.raises(ValueError, match="only supported for dry runs"):
+        run_issue(settings, 5, dry_run=False, github=FakeGitHub(make_issue()))
+
+
+def test_injected_github_and_cloner_are_used_instead_of_the_real_ones(monkeypatch, settings, tmp_path):
+    github = FakeGitHub(make_issue())
+    cloned = []
+
+    def cloner(repo, dest):
+        cloned.append(repo)
+        raise RuntimeError("stop after cloning")
+
+    monkeypatch.setattr(pipeline, "LLMClient", lambda **kwargs: object())
+    monkeypatch.setattr(pipeline, "triage_issue", lambda llm, job: None)
+    monkeypatch.setattr(pipeline, "resolve_auth", lambda *a: pytest.fail("real auth must not be used"))
+    monkeypatch.setattr(pipeline, "clone_repo", lambda *a: pytest.fail("real clone must not be used"))
+    settings = settings.model_copy(update={"workspaces_dir": str(tmp_path)})
+
+    with pytest.raises(RuntimeError, match="stop after cloning"):
+        run_issue(settings, 5, dry_run=True, github=github, cloner=cloner)
+    assert cloned == ["o/r"]

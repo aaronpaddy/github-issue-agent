@@ -1,0 +1,13 @@
+diff --git a/src/expense_splitter/models.py b/src/expense_splitter/models.py
+index 65e4f0e..d9581d6 100644
+--- a/src/expense_splitter/models.py
++++ b/src/expense_splitter/models.py
+@@ -22,7 +22,7 @@ def format_cents(cents: int) -> str:
+     """Render integer cents as a dollar string, e.g. 1250 -> "$12.50"."""
+     sign = "-" if cents < 0 else ""
+     dollars, remainder = divmod(abs(cents), 100)
+-    return f"{sign}${dollars}.{remainder:02d}"
++    return f"{sign}${dollars:,}.{remainder:02d}"
+ 
+ 
+ @dataclass(frozen=True)

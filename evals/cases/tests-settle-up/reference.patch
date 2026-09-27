@@ -1,0 +1,41 @@
+diff --git a/tests/test_settle.py b/tests/test_settle.py
+new file mode 100644
+index 0000000..6e89cd0
+--- /dev/null
++++ b/tests/test_settle.py
+@@ -0,0 +1,35 @@
++from expense_splitter import Transfer, settle_up
++
++
++def apply(net, transfers):
++    result = dict(net)
++    for t in transfers:
++        result[t.sender] = result.get(t.sender, 0) + t.amount_cents
++        result[t.receiver] = result.get(t.receiver, 0) - t.amount_cents
++    return result
++
++
++def test_one_debtor_one_creditor():
++    assert settle_up({"ann": 500, "bob": -500}) == [Transfer("bob", "ann", 500)]
++
++
++def test_several_debtors_and_creditors_settle_everyone():
++    net = {"ann": 700, "bob": 300, "cy": -400, "dee": -600}
++    transfers = settle_up(net)
++    assert all(v == 0 for v in apply(net, transfers).values())
++    assert sum(t.amount_cents for t in transfers) == 1000
++
++
++def test_zero_balances_need_no_transfers():
++    assert settle_up({}) == []
++    assert settle_up({"ann": 0, "bob": 0}) == []
++
++
++def test_biggest_creditor_is_paid_first():
++    net = {"ann": 100, "bob": 900, "cy": -1000}
++    assert settle_up(net) == [Transfer("cy", "bob", 900), Transfer("cy", "ann", 100)]
++
++
++def test_ties_are_broken_alphabetically():
++    net = {"zed": 500, "ann": 500, "bob": -500, "amy": -500}
++    assert settle_up(net) == [Transfer("amy", "ann", 500), Transfer("bob", "zed", 500)]

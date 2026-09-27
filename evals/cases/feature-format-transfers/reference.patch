@@ -1,0 +1,45 @@
+diff --git a/src/expense_splitter/__init__.py b/src/expense_splitter/__init__.py
+index 6990346..20c814d 100644
+--- a/src/expense_splitter/__init__.py
++++ b/src/expense_splitter/__init__.py
+@@ -1,7 +1,7 @@
+ """Split shared expenses fairly and work out who should pay whom."""
+ 
+ from expense_splitter.models import Expense, Transfer, format_cents, to_cents
+-from expense_splitter.settle import balances, settle_up
++from expense_splitter.settle import balances, format_transfers, settle_up
+ from expense_splitter.split import split_by_weights, split_equally
+ 
+ __all__ = [
+@@ -9,6 +9,7 @@ __all__ = [
+     "Transfer",
+     "balances",
+     "format_cents",
++    "format_transfers",
+     "settle_up",
+     "split_by_weights",
+     "split_equally",
+diff --git a/src/expense_splitter/settle.py b/src/expense_splitter/settle.py
+index b9cba57..5e369d8 100644
+--- a/src/expense_splitter/settle.py
++++ b/src/expense_splitter/settle.py
+@@ -5,7 +5,7 @@ from __future__ import annotations
+ from collections import defaultdict
+ from collections.abc import Iterable, Mapping
+ 
+-from expense_splitter.models import Expense, Transfer
++from expense_splitter.models import Expense, Transfer, format_cents
+ from expense_splitter.split import split_equally
+ 
+ 
+@@ -52,3 +52,10 @@ def settle_up(net_balances: Mapping[str, int]) -> list[Transfer]:
+         if debt_left[j] == 0:
+             j += 1
+     return transfers
++
++
++def format_transfers(transfers: Iterable[Transfer]) -> list[str]:
++    """Render transfers as readable lines like "cy pays ann $40.00"."""
++    return [
++        f"{t.sender} pays {t.receiver} {format_cents(t.amount_cents)}" for t in transfers
++    ]

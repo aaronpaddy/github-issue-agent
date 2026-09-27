@@ -1,0 +1,16 @@
+{
+  "id": "bug-to-cents-invalid",
+  "description": "to_cents leaks obscure errors on invalid input",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "fixed",
+  "trigger": "label",
+  "issue": {
+    "number": 15,
+    "title": "to_cents raises an obscure error for invalid amounts",
+    "body": "`to_cents` accepts a string amount, but for anything that isn't a plain decimal number it leaks an error from the standard library that says nothing about what went wrong:\n\n    >>> to_cents(\"abc\")\n    decimal.InvalidOperation: [<class 'decimal.ConversionSyntax'>]\n\n    >>> to_cents(\"\")\n    decimal.InvalidOperation: [<class 'decimal.ConversionSyntax'>]\n\n    >>> to_cents(\"$12.50\")\n    decimal.InvalidOperation: [<class 'decimal.ConversionSyntax'>]\n\n`\"NaN\"` raises a different, equally confusing `ValueError: cannot convert NaN to integer`, and `\"Infinity\"` has the same problem.\n\n**Expected**\n\n- `to_cents` raises a `ValueError` for any input that isn't a finite decimal number.\n- The message names the offending input, e.g. `invalid amount: 'abc'`.\n- Valid input, including negatives and Decimal values, behaves exactly as before.\n\nPlease add tests for the invalid cases.",
+    "comments": []
+  },
+  "hidden_test": "hidden_test.py",
+  "require_tests_added": true
+}

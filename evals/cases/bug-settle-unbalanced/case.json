@@ -1,0 +1,16 @@
+{
+  "id": "bug-settle-unbalanced",
+  "description": "settle_up silently ignores unbalanced input",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "fixed",
+  "trigger": "label",
+  "issue": {
+    "number": 12,
+    "title": "settle_up silently ignores balances that don't sum to zero",
+    "body": "`settle_up` assumes the net balances add up to zero, but it never checks. If they don't, it returns transfers that quietly leave people unsettled:\n\n    >>> settle_up({\"ann\": 100, \"bob\": -40})\n    [Transfer(sender='bob', receiver='ann', amount_cents=40)]\n\nThat's 60 cents of ann's balance that no transfer covers, and nothing tells the caller. Unbalanced input usually means a bug upstream, so it should be reported rather than hidden.\n\n**Expected**\n\n- `settle_up` raises a `ValueError` with a clear message when the balances don't sum to zero.\n- Balanced input, including an empty mapping, behaves exactly as before.\n\nPlease add tests for both cases.",
+    "comments": []
+  },
+  "hidden_test": "hidden_test.py",
+  "require_tests_added": true
+}

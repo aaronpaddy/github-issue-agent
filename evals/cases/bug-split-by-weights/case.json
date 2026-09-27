@@ -1,0 +1,16 @@
+{
+  "id": "bug-split-by-weights",
+  "description": "split_by_weights crashes or loses money on zero/empty weights",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "fixed",
+  "trigger": "label",
+  "issue": {
+    "number": 2,
+    "title": "split_by_weights crashes or silently loses money on zero or empty weights",
+    "body": "Two bad inputs to `split_by_weights` behave badly:\n\n```python\n>>> split_by_weights(100, {\"ann\": 0, \"bob\": 0})\nZeroDivisionError: integer division or modulo by zero\n\n>>> split_by_weights(100, {})\n{}   # returns nothing, and the 100 cents are simply gone\n```\n\n`split_equally` already raises a clear `ValueError` for an empty group, and these should behave the same way.\n\n**Expected**\n\n- All-zero weights raise a `ValueError` with a clear message.\n- An empty mapping raises a `ValueError` with a clear message.\n- Normal inputs are unchanged.\n\nPlease add tests for both cases.",
+    "comments": []
+  },
+  "hidden_test": "hidden_test.py",
+  "require_tests_added": true
+}

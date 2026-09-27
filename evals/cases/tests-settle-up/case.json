@@ -1,0 +1,34 @@
+{
+  "id": "tests-settle-up",
+  "description": "add tests for settle_up (judged by deliberate bugs)",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "fixed",
+  "trigger": "label",
+  "issue": {
+    "number": 3,
+    "title": "Add tests for settle_up",
+    "body": "`settle_up` is the core of the library but has no tests at all. Please add some in a new `tests/test_settle.py`.\n\nCases worth covering:\n\n- one debtor paying one creditor\n- several debtors and creditors\n- balances that are already all zero returns an empty list\n- applying the returned transfers to the input balances brings every balance to zero\n- the output is deterministic when amounts tie (ordering is alphabetical by name)",
+    "comments": []
+  },
+  "mutants": [
+    {
+      "file": "src/expense_splitter/settle.py",
+      "old": "pay = min(credit_left[i], debt_left[j])",
+      "new": "pay = max(credit_left[i], debt_left[j])"
+    },
+    {
+      "file": "src/expense_splitter/settle.py",
+      "old": "transfers.append(Transfer(debtors[j][0], creditors[i][0], pay))",
+      "new": "transfers.append(Transfer(creditors[i][0], debtors[j][0], pay))"
+    },
+    {
+      "file": "src/expense_splitter/settle.py",
+      "old": "key=lambda pair: (-pair[1], pair[0]),",
+      "new": "key=lambda pair: (pair[1], pair[0]),",
+      "count": 1
+    }
+  ],
+  "min_mutants_caught": 2,
+  "require_tests_added": true
+}

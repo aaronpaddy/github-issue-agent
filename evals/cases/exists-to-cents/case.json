@@ -1,0 +1,14 @@
+{
+  "id": "exists-to-cents",
+  "description": "asks for something that already exists",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "no_change",
+  "trigger": "label",
+  "issue": {
+    "number": 103,
+    "title": "Is there a helper to turn \"12.50\" into cents?",
+    "body": "I want to store amounts as integer cents. Is there a helper for converting a string like `\"12.50\"` to cents, or do I need to write my own? If there isn't one, please add it.",
+    "comments": []
+  }
+}

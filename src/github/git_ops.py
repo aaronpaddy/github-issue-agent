@@ -95,3 +95,8 @@ def create_commit_and_push(
         root,
     )
     _git(["push", f"https://github.com/{repo_full_name}.git", f"HEAD:{branch_name}"], root, token)
+
+
+def checkout(dest: Path, ref: str) -> None:
+    """Check out a specific commit in an existing clone (used to pin an eval to a known state)."""
+    _git(["checkout", "--quiet", ref], dest)

@@ -1,0 +1,28 @@
+diff --git a/src/expense_splitter/models.py b/src/expense_splitter/models.py
+index 65e4f0e..d7a1220 100644
+--- a/src/expense_splitter/models.py
++++ b/src/expense_splitter/models.py
+@@ -6,7 +6,7 @@ All money is stored as integer cents so no arithmetic ever touches floats.
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+-from decimal import ROUND_HALF_UP, Decimal
++from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+ 
+ 
+ def to_cents(amount: str | Decimal) -> int:
+@@ -14,7 +14,13 @@ def to_cents(amount: str | Decimal) -> int:
+ 
+     Halves round up, so "0.005" becomes 1 cent.
+     """
+-    cents = (Decimal(amount) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP)
++    try:
++        value = Decimal(amount)
++    except (InvalidOperation, ValueError, TypeError):
++        raise ValueError(f"invalid amount: {amount!r}") from None
++    if not value.is_finite():
++        raise ValueError(f"invalid amount: {amount!r}")
++    cents = (value * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+     return int(cents)
+ 
+ 

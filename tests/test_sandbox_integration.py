@@ -98,3 +98,12 @@ def test_a_failing_command_reports_its_exit_code_and_output(ws):
     result = ws.run(["sh", "-c", "echo oops >&2; exit 3"])
     assert result.returncode == 3
     assert "oops" in result.stderr
+
+
+def test_a_container_started_right_after_a_host_write_sees_the_new_file(ws):
+    # Without the settle wait, Docker Desktop's file sharing showed a stale file about 1 run in 4.
+    stale = 0
+    for i in range(8):
+        ws.write_file("value.txt", f"version {i}")
+        stale += ws.run(["cat", "/workspace/value.txt"]).stdout != f"version {i}"
+    assert stale == 0

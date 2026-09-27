@@ -162,3 +162,44 @@ def test_docker_problem_reports_each_failure_mode(monkeypatch):
     assert "respond" in (docker_problem() or "")
     monkeypatch.setattr(subprocess, "run", fine)
     assert docker_problem() is None
+
+
+def test_a_container_waits_for_the_file_share_after_a_host_write(monkeypatch, tmp_path):
+    from src.agent import sandbox
+
+    sleeps = []
+    monkeypatch.setattr(sandbox.time, "sleep", sleeps.append)
+    clock = iter([100.0, 100.2, 105.0, 105.0])  # write, then run 0.2s later, then a quiet run
+    monkeypatch.setattr(sandbox.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(subprocess, "run", Recorder())
+    ws = make_workspace(tmp_path)
+
+    ws.write_file("a.py", "x = 1\n")   # monotonic -> 100.0
+    ws.run(["pytest"])                    # monotonic -> 100.2: 0.8s short of the settle time
+    ws.run(["pytest"])                    # monotonic -> 105.0: long since settled
+
+    assert sleeps == [pytest.approx(0.8)]
+
+
+def test_git_does_not_wait_because_it_runs_on_the_host(monkeypatch, tmp_path):
+    from src.agent import sandbox
+
+    sleeps = []
+    monkeypatch.setattr(sandbox.time, "sleep", sleeps.append)
+    monkeypatch.setattr(subprocess, "run", Recorder())
+    ws = make_workspace(tmp_path)
+    ws.mark_changed()
+    ws.run(["git", "status"])
+    assert sleeps == []
+
+
+def test_mark_changed_covers_edits_made_outside_write_file(monkeypatch, tmp_path):
+    from src.agent import sandbox
+
+    sleeps = []
+    monkeypatch.setattr(sandbox.time, "sleep", sleeps.append)
+    monkeypatch.setattr(subprocess, "run", Recorder())
+    ws = make_workspace(tmp_path)
+    ws.mark_changed()
+    ws.run(["pytest"])
+    assert len(sleeps) == 1 and sleeps[0] > 0

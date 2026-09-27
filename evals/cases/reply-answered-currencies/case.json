@@ -1,0 +1,26 @@
+{
+  "id": "reply-answered-currencies",
+  "description": "resumes after a person answers the agent's question",
+  "repo": "aaronpaddy/expense-splitter",
+  "base_sha": "c29e1a69b67f7ddca179cc3b7f9c47f4ed84b455",
+  "expect": "fixed",
+  "trigger": "reply",
+  "issue": {
+    "number": 5,
+    "title": "Support other currencies",
+    "body": "We're planning a trip abroad next month and it would be great if this worked with other currencies.",
+    "comments": [
+      {
+        "author": "issue-pr-agent[bot]",
+        "agent_kind": "clarification",
+        "body": "I looked into this but need more information before I can make a change.\n\n**Question**\nWhat does \"supporting other currencies\" mean here: display formatting only, or conversion between currencies (and if so, with what exchange rates)?"
+      },
+      {
+        "author": "aaronpaddy",
+        "body": "Formatting only, no conversion. Show the right symbol for USD, EUR and GBP (e.g. \u20ac12.50), and let people pass a currency code."
+      }
+    ]
+  },
+  "hidden_test": "hidden_test.py",
+  "require_tests_added": true
+}
